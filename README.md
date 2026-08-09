@@ -14,12 +14,12 @@ once, so a time that works for everybody can be found.
 
 ## Capabilities
 
-**Time slot management** — create available slots of configurable duration, modify or
-delete them, and mark them busy or free.
+**Time slot management** — publish availability over any range, which is split into
+whole-hour slots; delete slots, or mark them busy to block time.
 
-**Meeting scheduling** — convert an available slot into a meeting with a title,
-description and participants. Booking marks the corresponding time as busy for everyone
-involved.
+**Meeting scheduling** — convert available slots into a meeting with a title,
+description and participants. A meeting spans one or more consecutive hours and marks
+that time busy for everyone involved.
 
 **Availability** — query free and busy time for one or more users across a selected time
 frame, aggregated into a single view.
@@ -32,13 +32,24 @@ Requires Docker. From the project root:
 docker compose up --build
 ```
 
-The service listens on `http://localhost:8080` and reports its health at:
+This starts PostgreSQL and the service. Flyway applies the schema on startup, and the
+application only reports healthy once the database is reachable:
 
 ```bash
 curl http://localhost:8080/actuator/health
 ```
 
-Stop it with `docker compose down`.
+| Service | Address | Credentials |
+|---------|---------|-------------|
+| API | `http://localhost:8080` | — |
+| PostgreSQL | `localhost:5432` | `minischeduler` / `minischeduler` |
+
+Database contents survive restarts in a named volume. Stop with `docker compose down`,
+or `docker compose down -v` to discard the data as well.
+
+Running the tests requires Docker too — they start a real PostgreSQL container via
+Testcontainers, so migrations and constraints are verified against the same database the
+service runs on.
 
 ---
 
