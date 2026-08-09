@@ -22,7 +22,22 @@ involved.
 **Availability** — query free and busy time for one or more users across a selected time
 frame, aggregated into a single view.
 
+## Running locally
+
+Requires Docker. From the project root:
+
+```bash
+docker compose up --build
+```
+
+The service listens on `http://localhost:8080` and reports its health at:
+
+```bash
+curl http://localhost:8080/actuator/health
+```
+
+Stop it with `docker compose down`.
+
 ---
 
-Setup instructions, API documentation and the design rationale are added as the
-implementation lands.
+API documentation and the design rationale are added as the implementation lands.

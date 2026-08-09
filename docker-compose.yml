@@ -1,0 +1,12 @@
+services:
+  app:
+    build: .
+    container_name: mini-meeting-scheduler
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: [ "CMD", "wget", "--spider", "-q", "http://localhost:8080/actuator/health" ]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
