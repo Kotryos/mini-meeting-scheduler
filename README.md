@@ -1,5 +1,7 @@
 # mini-meeting-scheduler
 
+[![CI](https://github.com/Kotryos/mini-meeting-scheduler/actions/workflows/ci.yml/badge.svg)](https://github.com/Kotryos/mini-meeting-scheduler/actions/workflows/ci.yml)
+
 *A miniature meeting-scheduling service, built as a time-boxed backend design exercise.*
 
 ## Overview
