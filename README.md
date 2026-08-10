@@ -51,6 +51,29 @@ Running the tests requires Docker too — they start a real PostgreSQL container
 Testcontainers, so migrations and constraints are verified against the same database the
 service runs on.
 
+## Authentication
+
+Every request except `/actuator/health` needs an API key in the `X-API-Key` header. Keys
+are stored only as SHA-256 hashes; the values below are seeded by a migration for local
+use and are not secrets.
+
+| User  | API key           | Role  |
+|-------|-------------------|-------|
+| Alice | `alice-demo-key`  | USER  |
+| Bob   | `bob-demo-key`    | USER  |
+| Carol | `carol-demo-key`  | USER  |
+| Admin | `admin-demo-key`  | ADMIN |
+
+Health is public, everything under `/actuator` requires the admin key:
+
+```bash
+curl http://localhost:8080/actuator/health
+curl -H "X-API-Key: admin-demo-key" http://localhost:8080/actuator/info
+```
+
+A missing or unknown key returns `401`; a valid key without the required role returns
+`403`.
+
 ---
 
 API documentation and the design rationale are added as the implementation lands.
