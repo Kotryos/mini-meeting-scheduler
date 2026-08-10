@@ -13,8 +13,8 @@ class TimeRangeTest {
     @Test
     void constructor_rangeEndingBeforeItStarts_isRejected() {
         // given
-        Instant from = Instant.parse("2026-09-01T10:00:00Z");
-        Instant to = Instant.parse("2026-09-01T09:00:00Z");
+        var from = Instant.parse("2026-09-01T10:00:00Z");
+        var to = Instant.parse("2026-09-01T09:00:00Z");
 
         // when / then
         assertThatThrownBy(() -> new TimeRange(from, to))
@@ -24,7 +24,7 @@ class TimeRangeTest {
     @Test
     void toHours_rangeAlignedToWholeHours_returnsEveryHourItCovers() {
         // given
-        TimeRange range = new TimeRange(
+        var range = new TimeRange(
                 Instant.parse("2026-09-01T09:00:00Z"),
                 Instant.parse("2026-09-01T12:00:00Z"));
 
@@ -41,7 +41,7 @@ class TimeRangeTest {
     @Test
     void toHours_rangeWithMinutes_dropsThePartialHoursAtBothEnds() {
         // given
-        TimeRange range = new TimeRange(
+        var range = new TimeRange(
                 Instant.parse("2026-09-01T09:15:00Z"),
                 Instant.parse("2026-09-01T11:45:00Z"));
 
@@ -57,7 +57,7 @@ class TimeRangeTest {
     @Test
     void toHours_rangeContainedWithinASingleHour_returnsNothing() {
         // given
-        TimeRange range = new TimeRange(
+        var range = new TimeRange(
                 Instant.parse("2026-09-01T09:15:00Z"),
                 Instant.parse("2026-09-01T09:45:00Z"));
 

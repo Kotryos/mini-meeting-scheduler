@@ -12,7 +12,7 @@ class HourTest {
     @Test
     void constructor_instantNotOnWholeHour_isRejected() {
         // given
-        Instant notOnTheHour = Instant.parse("2026-09-01T09:30:00Z");
+        var notOnTheHour = Instant.parse("2026-09-01T09:30:00Z");
 
         // when / then
         assertThatThrownBy(() -> new Hour(notOnTheHour))
@@ -22,10 +22,10 @@ class HourTest {
     @Test
     void containing_instantInsideAnHour_returnsThatHour() {
         // given
-        Instant middleOfTheHour = Instant.parse("2026-09-01T09:47:13Z");
+        var middleOfTheHour = Instant.parse("2026-09-01T09:47:13Z");
 
         // when
-        Hour hour = Hour.containing(middleOfTheHour);
+        var hour = Hour.containing(middleOfTheHour);
 
         // then
         assertThat(hour.start()).isEqualTo(Instant.parse("2026-09-01T09:00:00Z"));
@@ -34,7 +34,7 @@ class HourTest {
     @Test
     void end_anyHour_isOneHourAfterItsStart() {
         // given
-        Hour hour = new Hour(Instant.parse("2026-09-01T09:00:00Z"));
+        var hour = new Hour(Instant.parse("2026-09-01T09:00:00Z"));
 
         // when
         Instant end = hour.end();

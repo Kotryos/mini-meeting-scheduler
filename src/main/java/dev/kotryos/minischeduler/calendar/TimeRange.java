@@ -14,8 +14,8 @@ public record TimeRange(Instant from, Instant to) {
 
     public List<Hour> toHours() {
         List<Hour> hours = new ArrayList<>();
-        Hour last = Hour.containing(to);
-        for (Hour hour = Hour.containing(from); hour.start().isBefore(last.start()); hour = hour.next()) {
+        var last = Hour.containing(to);
+        for (var hour = Hour.containing(from); hour.start().isBefore(last.start()); hour = hour.next()) {
             hours.add(hour);
         }
         return List.copyOf(hours);
