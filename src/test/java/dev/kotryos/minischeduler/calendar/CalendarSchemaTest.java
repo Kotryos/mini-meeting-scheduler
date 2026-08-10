@@ -1,5 +1,6 @@
-package dev.kotryos.minischeduler;
+package dev.kotryos.minischeduler.calendar;
 
+import dev.kotryos.minischeduler.TestcontainersConfiguration;
 import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
