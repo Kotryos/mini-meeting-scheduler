@@ -23,6 +23,7 @@ services:
       postgres:
         condition: service_healthy
     environment:
+      SPRING_PROFILES_ACTIVE: demo
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/minischeduler
       SPRING_DATASOURCE_USERNAME: minischeduler
       SPRING_DATASOURCE_PASSWORD: minischeduler

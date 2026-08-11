@@ -1,0 +1,7 @@
+users:
+  - id: 1
+    email: "alice@example.com"
+    display_name: "Alice"
+  - id: 2
+    email: "bob@example.com"
+    display_name: "Bob"

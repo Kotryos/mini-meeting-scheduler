@@ -1,5 +1,7 @@
 package dev.kotryos.minischeduler.calendar;
 
+import com.github.database.rider.core.api.dataset.DataSet;
+import com.github.database.rider.junit5.api.DBRider;
 import dev.kotryos.minischeduler.TestcontainersConfiguration;
 import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.junit.jupiter.api.Test;
@@ -10,27 +12,26 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.time.OffsetDateTime;
-import java.util.UUID;
 
-import static java.util.Objects.requireNonNull;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @SpringBootTest
 @Import(TestcontainersConfiguration.class)
+@DBRider
 class CalendarSchemaTest {
+
+    private static final long ALICE = 1;
+    private static final long BOB = 2;
 
     @Autowired
     private JdbcTemplate jdbc;
 
     @Test
+    @DataSet("datasets/calendar-schema/alice-free-at-nine.yml")
     void insertSlot_duplicateHourOfSameUser_isRejected() {
-        // given
-        long user = createUser();
-        insertSlot(user, "09:00", "10:00");
-
         // when
-        ThrowingCallable insert = () -> insertSlot(user, "09:00", "10:00");
+        ThrowingCallable insert = () -> insertSlot(ALICE, "09:00", "10:00");
 
         // then
         assertThatThrownBy(insert)
@@ -39,26 +40,20 @@ class CalendarSchemaTest {
     }
 
     @Test
+    @DataSet("datasets/calendar-schema/alice-free-at-nine.yml")
     void insertSlot_sameHourOfAnotherUser_isAccepted() {
-        // given
-        long user = createUser();
-        long otherUser = createUser();
-        insertSlot(user, "09:00", "10:00");
-
         // when
-        ThrowingCallable insert = () -> insertSlot(otherUser, "09:00", "10:00");
+        ThrowingCallable insert = () -> insertSlot(BOB, "09:00", "10:00");
 
         // then
         assertThatCode(insert).doesNotThrowAnyException();
     }
 
     @Test
+    @DataSet("datasets/calendar-schema/users.yml")
     void insertSlot_startNotAlignedToWholeHour_isRejected() {
-        // given
-        long user = createUser();
-
         // when
-        ThrowingCallable insert = () -> insertSlot(user, "09:30", "10:30");
+        ThrowingCallable insert = () -> insertSlot(ALICE, "09:30", "10:30");
 
         // then
         assertThatThrownBy(insert)
@@ -67,23 +62,15 @@ class CalendarSchemaTest {
     }
 
     @Test
+    @DataSet("datasets/calendar-schema/users.yml")
     void insertSlot_lastingLongerThanOneHour_isRejected() {
-        // given
-        long user = createUser();
-
         // when
-        ThrowingCallable insert = () -> insertSlot(user, "09:00", "11:00");
+        ThrowingCallable insert = () -> insertSlot(ALICE, "09:00", "11:00");
 
         // then
         assertThatThrownBy(insert)
                 .isInstanceOf(DataIntegrityViolationException.class)
                 .hasMessageContaining("time_slot_one_hour_long");
-    }
-
-    private long createUser() {
-        return requireNonNull(jdbc.queryForObject(
-                "INSERT INTO users (email, display_name) VALUES (?, ?) RETURNING id",
-                Long.class, UUID.randomUUID() + "@example.test", "Test User"));
     }
 
     private void insertSlot(long userId, String startTime, String endTime) {
@@ -92,6 +79,6 @@ class CalendarSchemaTest {
     }
 
     private static OffsetDateTime at(String time) {
-        return OffsetDateTime.parse("2026-09-01T" + time + ":00Z");
+        return OffsetDateTime.parse("2026-11-01T" + time + ":00Z");
     }
 }

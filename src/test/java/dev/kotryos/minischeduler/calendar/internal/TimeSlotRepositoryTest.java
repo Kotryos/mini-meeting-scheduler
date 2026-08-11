@@ -1,5 +1,8 @@
 package dev.kotryos.minischeduler.calendar.internal;
 
+import com.github.database.rider.core.api.dataset.DataSet;
+import com.github.database.rider.core.api.dataset.ExpectedDataSet;
+import com.github.database.rider.junit5.api.DBRider;
 import dev.kotryos.minischeduler.TestcontainersConfiguration;
 import dev.kotryos.minischeduler.calendar.Hour;
 import dev.kotryos.minischeduler.calendar.SlotStatus;
@@ -7,42 +10,35 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
-import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
-import java.time.OffsetDateTime;
-import java.time.ZoneOffset;
-import java.time.temporal.ChronoUnit;
 import java.util.List;
-import java.util.UUID;
+import java.util.function.Supplier;
 
-import static java.util.Objects.requireNonNull;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest
 @Import(TestcontainersConfiguration.class)
+@DBRider
 class TimeSlotRepositoryTest {
 
-    private record StoredSlot(Instant startAt, Instant endAt, String status) {
-    }
+    private static final long ALICE = 1;
+    private static final long BOB = 2;
+    private static final long ALICE_SLOT = 1000;
+    private static final long BOB_SLOT = 1001;
 
     @Autowired
     private TimeSlotRepository repository;
 
     @Autowired
-    private JdbcTemplate jdbc;
+    private TransactionTemplate transactions;
 
     @Test
+    @DataSet("datasets/time-slot-repository/alice-four-consecutive-hours.yml")
     void findInWindow_slotsInsideAndOutsideTheWindow_returnsOnlyThoseInside() {
-        // given
-        long user = createUser();
-        insertSlot(user, "08:00");
-        insertSlot(user, "09:00");
-        insertSlot(user, "10:00");
-        insertSlot(user, "11:00");
-
         // when
-        List<TimeSlot> found = repository.findInWindow(user, at("09:00"), at("11:00"));
+        List<TimeSlot> found = repository.findInWindow(ALICE, at("09:00"), at("11:00"));
 
         // then
         assertThat(found).extracting(slot -> slot.hour().start())
@@ -51,46 +47,72 @@ class TimeSlotRepositoryTest {
     }
 
     @Test
+    @DataSet("datasets/time-slot-repository/alice.yml")
+    @ExpectedDataSet(value = "datasets/time-slot-repository/expected-alice-free-at-nine.yml", ignoreCols = "id")
     void saveAll_freeSlot_storesAnHourLongFreeRow() {
-        // given
-        long user = createUser();
-
         // when
-        repository.saveAll(List.of(TimeSlot.free(user, new Hour(at("09:00")))));
+        repository.saveAll(List.of(TimeSlot.free(ALICE, new Hour(at("09:00")))));
+    }
+
+    @Test
+    @DataSet("datasets/time-slot-repository/alice-and-bob-free-at-nine.yml")
+    void findTakenHours_someOfTheHoursAlreadyPublished_returnsOnlyThose() {
+        // when
+        List<Instant> taken = repository.findTakenHours(ALICE, List.of(at("09:00"), at("10:00")));
 
         // then
-        StoredSlot stored = storedSlotOf(user);
-        assertThat(stored.startAt()).isEqualTo(at("09:00"));
-        assertThat(stored.endAt()).isEqualTo(at("10:00"));
-        assertThat(stored.status()).isEqualTo("FREE");
+        assertThat(taken).containsExactly(at("09:00"));
     }
 
-    private long createUser() {
-        return requireNonNull(jdbc.queryForObject(
-                "INSERT INTO users (email, display_name) VALUES (?, ?) RETURNING id",
-                Long.class, UUID.randomUUID() + "@example.test", "Test User"));
+    @Test
+    @DataSet("datasets/time-slot-repository/alice-and-bob-free-at-nine.yml")
+    @ExpectedDataSet("datasets/time-slot-repository/expected-alice-busy-bob-free.yml")
+    void updateStatus_slotBelongingToTheCaller_marksItBusy() {
+        // when
+        int affected = inTransaction(() -> repository.updateStatus(ALICE_SLOT, ALICE, SlotStatus.BUSY));
+
+        // then
+        assertThat(affected).isOne();
     }
 
-    private void insertSlot(long userId, String startTime) {
-        jdbc.update("INSERT INTO time_slot (user_id, start_at, end_at, status) VALUES (?, ?, ?, 'FREE')",
-                userId, offset(at(startTime)), offset(at(startTime).plus(1, ChronoUnit.HOURS)));
+    @Test
+    @DataSet("datasets/time-slot-repository/alice-and-bob-free-at-nine.yml")
+    @ExpectedDataSet("datasets/time-slot-repository/expected-alice-and-bob-free-at-nine.yml")
+    void updateStatus_slotBelongingToAnotherUser_changesNothing() {
+        // when
+        int affected = inTransaction(() -> repository.updateStatus(BOB_SLOT, ALICE, SlotStatus.BUSY));
+
+        // then
+        assertThat(affected).isZero();
     }
 
-    private StoredSlot storedSlotOf(long userId) {
-        return requireNonNull(jdbc.queryForObject(
-                "SELECT start_at, end_at, status FROM time_slot WHERE user_id = ?",
-                (rs, rowNum) -> new StoredSlot(
-                        rs.getObject("start_at", OffsetDateTime.class).toInstant(),
-                        rs.getObject("end_at", OffsetDateTime.class).toInstant(),
-                        rs.getString("status")),
-                userId));
+    @Test
+    @DataSet("datasets/time-slot-repository/alice-and-bob-free-at-nine.yml")
+    @ExpectedDataSet("datasets/time-slot-repository/expected-only-bob-free-at-nine.yml")
+    void deleteOwned_slotBelongingToTheCaller_removesIt() {
+        // when
+        int affected = inTransaction(() -> repository.deleteOwned(ALICE_SLOT, ALICE));
+
+        // then
+        assertThat(affected).isOne();
     }
 
-    private static OffsetDateTime offset(Instant instant) {
-        return instant.atOffset(ZoneOffset.UTC);
+    @Test
+    @DataSet("datasets/time-slot-repository/alice-and-bob-free-at-nine.yml")
+    @ExpectedDataSet("datasets/time-slot-repository/expected-alice-and-bob-free-at-nine.yml")
+    void deleteOwned_slotBelongingToAnotherUser_changesNothing() {
+        // when
+        int affected = inTransaction(() -> repository.deleteOwned(BOB_SLOT, ALICE));
+
+        // then
+        assertThat(affected).isZero();
+    }
+
+    private int inTransaction(Supplier<Integer> statement) {
+        return transactions.execute(status -> statement.get());
     }
 
     private static Instant at(String time) {
-        return Instant.parse("2026-09-01T" + time + ":00Z");
+        return Instant.parse("2026-11-01T" + time + ":00Z");
     }
 }

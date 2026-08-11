@@ -48,6 +48,12 @@ public class TimeSlot {
         return new TimeSlot(userId, hour, SlotStatus.FREE);
     }
 
+    static TimeSlot stored(Long id, Long userId, Hour hour, SlotStatus status) {
+        var slot = new TimeSlot(userId, hour, status);
+        slot.id = id;
+        return slot;
+    }
+
     public Long id() {
         return id;
     }

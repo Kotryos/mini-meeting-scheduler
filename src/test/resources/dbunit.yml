@@ -1,0 +1,3 @@
+caseInsensitiveStrategy: LOWERCASE
+cacheConnection: false
+alwaysCleanBefore: true

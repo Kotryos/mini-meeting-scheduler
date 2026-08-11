@@ -1,0 +1,4 @@
+time_slot:
+  - id: 1001
+    user_id: 2
+    status: "FREE"

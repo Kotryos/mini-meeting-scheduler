@@ -15,9 +15,19 @@ spring:
   mvc:
     problemdetails:
       enabled: true
+  flyway:
+    locations: classpath:db/migration
 
 management:
   endpoints:
     web:
       exposure:
         include: health,info
+
+---
+spring:
+  config:
+    activate:
+      on-profile: demo
+  flyway:
+    locations: classpath:db/migration,classpath:db/seed

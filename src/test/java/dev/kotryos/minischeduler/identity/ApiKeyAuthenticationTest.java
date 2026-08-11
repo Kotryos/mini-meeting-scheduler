@@ -1,5 +1,7 @@
 package dev.kotryos.minischeduler.identity;
 
+import com.github.database.rider.core.api.dataset.DataSet;
+import com.github.database.rider.junit5.api.DBRider;
 import dev.kotryos.minischeduler.TestcontainersConfiguration;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -15,6 +17,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest
 @AutoConfigureMockMvc
 @Import(TestcontainersConfiguration.class)
+@DBRider
+@DataSet("datasets/identity/alice-and-admin-keys.yml")
 class ApiKeyAuthenticationTest {
 
     private static final String HEADER = "X-API-Key";
@@ -40,6 +44,13 @@ class ApiKeyAuthenticationTest {
     void protectedEndpoint_withUnknownApiKey_isUnauthorized() throws Exception {
         // when / then
         mockMvc.perform(get("/actuator/info").header(HEADER, "not-a-real-key"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void protectedEndpoint_withBlankApiKey_isUnauthorized() throws Exception {
+        // when / then
+        mockMvc.perform(get("/actuator/info").header(HEADER, "   "))
                 .andExpect(status().isUnauthorized());
     }
 

@@ -1,0 +1,17 @@
+users:
+  - id: 1
+    email: "alice@example.com"
+    display_name: "Alice"
+  - id: 2
+    email: "admin@example.com"
+    display_name: "Admin"
+
+api_key:
+  - id: 1
+    user_id: 1
+    key_hash: "0572c17ed012b3efdf9df98db1718f225887132739b8da945d81ac5a7d1fea45"
+    role: "USER"
+  - id: 2
+    user_id: 2
+    key_hash: "806647bb62d32253b6797dad9d71d211d172005a6564317a920e9ba78322a338"
+    role: "ADMIN"

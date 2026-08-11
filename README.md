@@ -114,11 +114,21 @@ a uniqueness problem the database already solves. With variable durations the sa
 guarantee needs a GiST exclusion constraint over ranges. The grid size is a deployment
 decision, not a structural one: a finer grid is a migration.
 
-**Demo data lives in a migration.** Demo users and their API keys are seeded by
-`V3__seed_demo_users.sql` so the service is usable immediately after
-`docker compose up`. In a real deployment that seed would move to a profile-gated Flyway
-location so it never reaches production, and tests would build their own fixtures rather
-than depend on it.
+**Demo users exist only under the `demo` profile.** Their accounts and API keys live in
+`db/seed`. Flyway reads that folder only when the profile is on, and Docker Compose turns
+it on — so the keys above work right after `docker compose up`. Start without the profile
+and the database has no users at all.
+
+**Coverage is a minimum, not a goal.** The build fails below 85% line and branch coverage.
+It currently sits at 95% and 100%. The number proves less than it looks: repositories are
+interfaces whose SQL lives in annotations, so JaCoCo cannot see them. The rule that stops
+one user from editing another user's slots counts for nothing in the report. What actually
+covers it are tests that try the cross-user write and expect it to fail.
+
+**Each test layer mocks the layer below.** Controller tests mock the service; the service
+test mocks the repository. Repository, schema and authentication tests run against a real
+PostgreSQL container and insert their own rows with DBUnit. No test relies on the demo
+data, and the mocked ones run without Docker.
 
 **Credentials are in plain text.** Database passwords sit in `docker-compose.yml` and
 demo API keys in the seed migration, so the stack starts with no setup. Production would
