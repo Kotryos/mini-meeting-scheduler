@@ -1,7 +1,11 @@
 package dev.kotryos.minischeduler.scheduling.internal;
 
 import dev.kotryos.minischeduler.calendar.Hour;
+import dev.kotryos.minischeduler.calendar.HourNotFreeException;
 import dev.kotryos.minischeduler.calendar.SlotBooking;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.DistributionSummary;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -14,10 +18,24 @@ class MeetingService {
 
     private final MeetingRepository meetings;
     private final SlotBooking slots;
+    private final Counter booked;
+    private final Counter refused;
+    private final DistributionSummary headcount;
 
-    MeetingService(MeetingRepository meetings, SlotBooking slots) {
+    MeetingService(MeetingRepository meetings, SlotBooking slots, MeterRegistry meters) {
         this.meetings = meetings;
         this.slots = slots;
+        this.booked = Counter.builder("meetings.requested")
+                .tag("outcome", "booked")
+                .description("Meetings that took the hour")
+                .register(meters);
+        this.refused = Counter.builder("meetings.requested")
+                .tag("outcome", "conflict")
+                .description("Meetings refused because somebody was not free")
+                .register(meters);
+        this.headcount = DistributionSummary.builder("meetings.participants")
+                .description("How many people each booked meeting holds")
+                .register(meters);
     }
 
     @Transactional
@@ -27,8 +45,15 @@ class MeetingService {
         participants.addAll(invited);
 
         var meeting = meetings.save(Meeting.scheduled(organizerId, title, description, hour));
-        slots.book(meeting.id(), hour, participants);
+        try {
+            slots.book(meeting.id(), hour, participants);
+        } catch (HourNotFreeException notFree) {
+            refused.increment();
+            throw notFree;
+        }
 
+        booked.increment();
+        headcount.record(participants.size());
         return view(meeting, List.copyOf(participants));
     }
 

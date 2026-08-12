@@ -52,7 +52,7 @@ service runs on.
 
 ## Walkthrough
 
-One script exercises the whole API — 38 requests in six acts, using the demo keys below.
+One script exercises the whole API — 40 requests in seven acts, using the demo keys below.
 It starts its own stack from an empty database, so the output is the same every time:
 
 ```bash
@@ -147,6 +147,10 @@ One booking wins because the check and the write are the same statement — see
 =========== ACT 6 — two people, one hour
 37. eight requests race for 10:00                       one 201, seven 409
 38. Alice's meetings                                    exactly two
+
+=========== ACT 7 — what the run left behind
+39. the counters this service keeps itself              3 booked, 10 refused
+40. the request timings Actuator adds for free          one line per endpoint
 ```
 
 Meeting ids skip numbers — a rolled-back booking still consumes a sequence value, because
@@ -279,6 +283,49 @@ slot cannot be marked free or deleted through the slot endpoints; both answer `4
 tell you to cancel first. That is what stops a calendar from saying someone is free while
 a meeting still expects them.
 
+## Metrics
+
+Actuator exposes `/actuator/metrics` and `/actuator/prometheus`, both behind the admin
+key like everything else under `/actuator`:
+
+```bash
+curl -H "X-API-Key: admin-demo-key" http://localhost:8080/actuator/prometheus
+```
+
+Most of what appears there is free — JVM memory and garbage collection, HikariCP pool
+usage, and `http_server_requests_seconds`, which times every endpoint broken down by URI
+and status. That last one already answers "how slow is booking" and "how many 409s are we
+returning", so there is no point measuring it again by hand.
+
+Two are added by this service, because nothing standard can know them:
+
+| Metric | Kind | What it tells you |
+|--------|------|-------------------|
+| `meetings_requested_total{outcome="booked"\|"conflict"}` | counter | how often people want the same hour |
+| `meetings_participants` | summary | how many people a typical meeting holds |
+
+After the walkthrough they read something like this:
+
+```
+meetings_requested_total{outcome="booked"} 3.0
+meetings_requested_total{outcome="conflict"} 10.0
+meetings_participants_count 3
+meetings_participants_sum 6.0
+meetings_participants_max 2.0
+```
+
+The conflict rate is the one worth watching: it is the ratio between what people ask for
+and what the calendar can give them. Note that `http_server_requests` currently reports
+the same number, since a `409` on `/api/v1/meetings` has exactly one cause today — the
+walkthrough prints both so you can see them agree. The named counter earns its place by
+saying what happened rather than where it happened: it keeps meaning if the path is
+versioned, and it stays honest the day a second thing on that endpoint returns `409`.
+`meetings_participants` has no such overlap; nothing outside the service knows how many
+people a booking held.
+
+Names are declared in Micrometer's dotted style — `meetings.requested` — and each registry
+renders them in its own convention, which is why Prometheus shows `meetings_requested_total`.
+
 ## Design notes
 
 **Every slot is exactly one hour.** Any published range is normalised onto that grid.
@@ -321,6 +368,14 @@ is a few hundred rows at most, so the check is worth more than the cleverness.
 `db/seed`. Flyway reads that folder only when the profile is on, and Docker Compose turns
 it on — so the keys above work right after `docker compose up`. Start without the profile
 and the database has no users at all.
+
+**Two custom metrics, not twenty.** Latency, error rates and pool saturation are already
+measured by Actuator, so wrapping a timer around a method that `http_server_requests`
+already times is duplication that drifts. The two added here are named for domain events
+rather than for endpoints, which is the distinction worth keeping: one counts what people
+asked the calendar for, the other how large the answer was. A Prometheus container is
+deliberately absent — the endpoint speaks the format, and where it is scraped from is a
+deployment decision.
 
 **Coverage is a minimum, not a goal.** The build fails below 85% line and branch coverage.
 It currently sits at 99% and 100%. The number proves less than it looks: repositories are

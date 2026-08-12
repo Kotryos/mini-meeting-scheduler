@@ -229,6 +229,24 @@ sleep "$PACE"
 step "so Alice ends up in" 200 "exactly two meetings"
 body -H "$ALICE" $API/api/v1/meetings
 
+act "ACT 7 — what the run left behind"
+
+# Same shape as body(), but the scrape is hundreds of lines, so each step keeps its own.
+metrics() {
+  local response status
+  response=$(curl -s -w $'\n%{http_code}' -H "$ADMIN" $API/actuator/prometheus)
+  status=${response##*$'\n'}
+  verdict "$status"
+  echo "${response%$'\n'*}" | grep -E "$1" | sed 's/^/      /' || true
+  sleep "$PACE"
+}
+
+step "the counters this service keeps itself" 200 "3 booked, 10 refused"
+metrics '^meetings_'
+
+step "the request timings Actuator adds for free" 200 "one line per endpoint"
+metrics '^http_server_requests_seconds_count.*/api/v1/'
+
 echo ""
 if [ "$failures" -eq 0 ]; then
   echo "${BOLD}${GREEN}── all $n steps behaved as expected ${RESET}"

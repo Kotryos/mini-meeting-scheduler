@@ -3,11 +3,13 @@ package dev.kotryos.minischeduler.scheduling.internal;
 import dev.kotryos.minischeduler.calendar.Hour;
 import dev.kotryos.minischeduler.calendar.HourNotFreeException;
 import dev.kotryos.minischeduler.calendar.SlotBooking;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -42,11 +44,17 @@ class MeetingServiceTest {
     @Mock
     private SlotBooking slots;
 
-    @InjectMocks
-    private MeetingService service;
-
     @Captor
     private ArgumentCaptor<Set<Long>> booked;
+
+    private final MeterRegistry meters = new SimpleMeterRegistry();
+
+    private MeetingService service;
+
+    @BeforeEach
+    void setUp() {
+        service = new MeetingService(meetings, slots, meters);
+    }
 
     @Test
     void schedule_participantsGiven_booksTheHourForThemAndTheOrganiser() {
@@ -184,6 +192,34 @@ class MeetingServiceTest {
         // when / then
         assertThatThrownBy(() -> service.cancel(ALICE, MEETING))
                 .isInstanceOf(MeetingNotFoundException.class);
+    }
+
+    @Test
+    void schedule_booked_countsTheBookingAndRecordsTheHeadcount() {
+        // given
+        given(meetings.save(any())).willReturn(storedMeeting());
+
+        // when
+        service.schedule(ALICE, "Standup", null, nine(), Set.of(BOB));
+
+        // then
+        assertThat(meters.get("meetings.requested").tag("outcome", "booked").counter().count()).isOne();
+        assertThat(meters.get("meetings.participants").summary().max()).isEqualTo(2);
+    }
+
+    @Test
+    void schedule_refused_countsItAsAConflictAndNotAsABooking() {
+        // given
+        given(meetings.save(any())).willReturn(storedMeeting());
+        willThrow(new HourNotFreeException("taken")).given(slots).book(anyLong(), any(), any());
+
+        // when
+        assertThatThrownBy(() -> service.schedule(ALICE, "Standup", null, nine(), Set.of(BOB)))
+                .isInstanceOf(HourNotFreeException.class);
+
+        // then
+        assertThat(meters.get("meetings.requested").tag("outcome", "conflict").counter().count()).isOne();
+        assertThat(meters.get("meetings.requested").tag("outcome", "booked").counter().count()).isZero();
     }
 
     private static Meeting storedMeeting() {
