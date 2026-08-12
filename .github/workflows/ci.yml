@@ -23,5 +23,5 @@ jobs:
       - name: Build and test
         run: mvn -B verify
 
-      - name: Build container image
-        run: docker compose build
+      - name: Exercise the running stack
+        run: bash demo.sh

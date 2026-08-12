@@ -50,6 +50,110 @@ Running the tests requires Docker too — they start a real PostgreSQL container
 Testcontainers, so migrations and constraints are verified against the same database the
 service runs on.
 
+## Walkthrough
+
+One script exercises the whole API — 38 requests in six acts, using the demo keys below.
+It starts its own stack from an empty database, so the output is the same every time:
+
+```bash
+bash demo.sh
+```
+
+That is the only command needed; it runs `docker compose` itself. Note that it discards
+the local database volume first, which is what makes it repeatable.
+
+Every step declares the status it expects and marks whether it got it, ending with a
+tally; the script exits non-zero if anything misbehaved. Responses are printed exactly as
+the API returns them, with a short pause between steps so the run reads rather than
+flashes past.
+
+**CI runs it on every push**, which is why it checks itself rather than only printing.
+The unit and integration tests all run against Testcontainers, so until this existed
+nothing proved that the Compose stack starts and answers — the build only ever built the
+image. This is also where concurrent booking is guarded: act 6 is the one thing no
+in-process test reproduces faithfully.
+
+Alice publishes her morning, blocks an hour by hand, and books a standup with Bob. Carol
+misses out. Along the way it hits the interesting failures: a range that covers no whole
+hour, an hour published twice, a slot belonging to someone else, a participant who never
+published the time, an unaligned meeting start, and a cancellation by the wrong person.
+
+The last act is the one worth watching. Eight requests race for the same free hour:
+
+```
+201
+409
+409
+409
+409
+409
+409
+409
+```
+
+One booking wins because the check and the write are the same statement — see
+*A meeting is booked by one statement* below.
+
+<details>
+<summary>Full expected output</summary>
+
+```
+=========== ACT 1 — getting in
+1. health needs no key                                  200
+2. no key at all                                        401
+3. a key nobody issued                                  401
+4. a user key on an admin endpoint                      403
+5. the admin key on the same endpoint                   200
+
+=========== ACT 2 — Alice publishes her availability
+6.  09:00-12:00 becomes three hourly slots              201  ids 1,2,3
+7.  a range inside one hour                             400  "Range does not cover a whole hour"
+8.  a range ending before it starts                     400  "A range must end after it starts"
+9.  overlapping an hour she already published           409  "Slots already published for [11:00Z]"
+10. the hour after her last one                         201  id 4
+11. Bob publishes 09:00-11:00                           201  ids 5,6
+
+=========== ACT 3 — reading a calendar
+12. Alice's whole day                                   four slots, all FREE
+13. she blocks 13:00 by hand                            204
+14. status=FREE                                         09:00, 10:00, 11:00
+15. status=BUSY                                         13:00
+16. the summary                                         [09:00-12:00 FREE] [13:00-14:00 BUSY]
+17. status=MAYBE                                        400
+18. Alice touching Bob's slot                           404, not 403
+
+=========== ACT 4 — the standup
+19. Alice books 09:00 with Bob                          201  participantIds [1,2]
+20. Alice's meetings                                    the standup
+21. Bob's meetings                                      the same one, though he booked nothing
+22. Carol's meetings                                    []
+23. Carol reading it directly                           404
+24. Alice's 09:00                                       BUSY
+25. freeing a slot the meeting holds                    409  "belongs to a meeting; cancel it first"
+26. deleting it                                         409  same
+27. booking the same hour twice                         409
+28. inviting Carol, who published nothing               409  "Not everyone has a free slot"
+29. a meeting starting at 10:30                         400  "An hour must start on a whole hour"
+30. a meeting with a blank title                        400
+31. an hour Alice never published                       409
+
+=========== ACT 5 — calling it off
+32. Bob is not the organiser                            404
+33. Alice cancels                                       204
+34. her 09:00                                           FREE again
+35. the cancelled meeting                               404
+36. rebooking under a new name                          201  — this is how you edit
+
+=========== ACT 6 — two people, one hour
+37. eight requests race for 10:00                       one 201, seven 409
+38. Alice's meetings                                    exactly two
+```
+
+Meeting ids skip numbers — a rolled-back booking still consumes a sequence value, because
+Postgres sequences are not transactional.
+
+</details>
+
 ## Authentication
 
 Every request except `/actuator/health` needs an API key in the `X-API-Key` header. Keys
