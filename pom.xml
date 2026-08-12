@@ -13,7 +13,7 @@
 
     <groupId>dev.kotryos</groupId>
     <artifactId>mini-meeting-scheduler</artifactId>
-    <version>0.0.1-SNAPSHOT</version>
+    <version>1.0.0</version>
     <name>mini-meeting-scheduler</name>
     <description>A miniature meeting-scheduling service</description>
 

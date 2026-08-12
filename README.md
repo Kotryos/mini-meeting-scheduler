@@ -2,457 +2,239 @@
 
 [![CI](https://github.com/Kotryos/mini-meeting-scheduler/actions/workflows/ci.yml/badge.svg)](https://github.com/Kotryos/mini-meeting-scheduler/actions/workflows/ci.yml)
 
-*A miniature meeting-scheduling service, built as a time-boxed backend design exercise.*
+A small service for arranging meetings. People publish the hours they are free, and any of
+those hours can be turned into a meeting with a title, a description and participants.
 
-## Overview
+Java 21, Spring Boot, PostgreSQL. Runs with one command.
 
-Users publish the time slots during which they are available. Any of those slots can be
-turned into a meeting with a title, a description and participants. Every user has a
-personal calendar tracking which of their time is free and which is taken, and that
-calendar can be viewed over a chosen time frame.
+## Running it
 
-## Capabilities
-
-**Time slot management** — publish availability over any range, which is split into
-whole-hour slots; delete slots, or mark them busy to block time.
-
-**Meeting scheduling** — turn a free hour into a meeting with a title, description and
-participants. Everyone involved must be free at that hour, and the meeting marks the
-time busy in each of their calendars.
-
-**Availability** — view your own calendar over a selected time frame, narrowed to just
-the free or just the busy time, or summarised into merged blocks.
-
-## Running locally
-
-Requires Docker. From the project root:
+Requires Docker.
 
 ```bash
 docker compose up --build
 ```
 
-This starts PostgreSQL and the service. Flyway applies the schema on startup, and the
-application only reports healthy once the database is reachable:
+This starts PostgreSQL and the service. Flyway creates the schema on startup, and the
+service reports healthy once the database is reachable:
 
 ```bash
 curl http://localhost:8080/actuator/health
 ```
 
-| Service | Address | Credentials |
-|---------|---------|-------------|
-| API | `http://localhost:8080` | — |
-| PostgreSQL | `localhost:5432` | `minischeduler` / `minischeduler` |
+Four demo accounts are seeded so there is something to log in with:
 
-Database contents survive restarts in a named volume. Stop with `docker compose down`,
-or `docker compose down -v` to discard the data as well.
+| User  | API key          | Role  |
+|-------|------------------|-------|
+| Alice | `alice-demo-key` | USER  |
+| Bob   | `bob-demo-key`   | USER  |
+| Carol | `carol-demo-key` | USER  |
+| Admin | `admin-demo-key` | ADMIN |
 
-Running the tests requires Docker too — they start a real PostgreSQL container via
-Testcontainers, so migrations and constraints are verified against the same database the
-service runs on.
+Every request except `/actuator/health` needs one of these in an `X-API-Key` header.
 
-## Walkthrough
+## API
 
-One script exercises the whole API — 41 requests in seven acts, using the demo keys below.
-It starts its own stack from an empty database, so the output is the same every time:
+| Method   | Path                    | What it does                                    |
+|----------|-------------------------|-------------------------------------------------|
+| `POST`   | `/api/v1/slots`         | publish the hours you are free over a range     |
+| `GET`    | `/api/v1/slots`         | list your slots in a window                     |
+| `GET`    | `/api/v1/slots/summary` | the same hours, neighbours merged into blocks   |
+| `PATCH`  | `/api/v1/slots/{id}`    | mark one slot busy or free                      |
+| `DELETE` | `/api/v1/slots/{id}`    | withdraw a slot                                 |
+| `POST`   | `/api/v1/meetings`      | book an hour as a meeting                       |
+| `GET`    | `/api/v1/meetings`      | list the meetings you are in                    |
+| `GET`    | `/api/v1/meetings/{id}` | read one of them                                |
+| `DELETE` | `/api/v1/meetings/{id}` | cancel it and free everyone's time              |
+| `GET`    | `/actuator/health`      | public                                          |
+| `GET`    | `/actuator/prometheus`  | metrics, admin key only                         |
 
-```bash
-bash demo.sh
+Add `status=FREE` or `status=BUSY` to the slot list to narrow it. When something goes
+wrong the response is a JSON object with the status and a message explaining it.
+
+**The API describes itself.** Swagger UI is at <http://localhost:8080/swagger-ui.html> and
+the OpenAPI document at <http://localhost:8080/v3/api-docs>. Both are open without a key,
+so the API can be read before anyone has one. The `X-API-Key` header is declared there, so
+**Authorize** in the UI accepts a demo key, and *Try it out* works against the running
+service.
+
+**The complete scenario can be run as a script.** `bash demo.sh` starts its own clean stack and
+makes 41 requests in seven acts: publishing hours, reading a calendar, booking a standup,
+the failure cases, cancelling, eight simultaneous bookings of the same hour and finally
+the metrics that run produced. Each step prints the status it expected next to the one it
+got, and the script exits non-zero if any of them disagree. CI runs it on every push.
+
+## Design and trade-offs
+
+### The service
+
+**A high-performance meeting scheduling platform, built with Spring Boot and Java.**  
+Java 21 and Spring Boot. A request here does very little except wait for the database, and
+virtual threads suit that exactly: a waiting request gives up its system thread instead of
+occupying one, so a great many can be in flight at once without a large pool behind them.
+The code stays ordinary in return — the usual transactions, JPA and stack traces that read
+top to bottom. A reactive stack would reach the same thread economics, and would be better
+at streaming or waiting on slow third parties, but neither happens here: every call is a
+short trip to one database.
+
+**Users manage their time slots, schedule meetings and view their availability.**  
+Three groups of endpoints, in the table above.
+
+**Users define available slots that can later be converted into meetings.**  
+`POST /api/v1/slots` publishes free hours. `POST /api/v1/meetings` converts one of them
+into a meeting.
+
+**Each user has a personal calendar where their time is managed.**  
+Every endpoint acts on the calendar belonging to the key presented. A slot owned by
+somebody else answers `404`, not `403`, so the API never confirms that something exists to
+someone with no business knowing. The cost is that a `404` no longer separates "there is no
+such slot" from "it is not yours", which makes a confused caller harder to help.
+
+**Calendar is a domain term only.**  
+There is a `calendar` module in the code, and that is where all of this lives. The word
+appears in no URL and in no field name — the API talks about slots and meetings, which is
+what a caller actually manipulates.
+
+**A slot can be booked as a meeting with a title and participants.**  
+Booking takes a title, an optional description and the participants. Everyone named must
+already have that hour free; if even one of them does not, nothing is booked at all.
+
+**Querying free or busy slots, aggregated over a selected time frame.**  
+`GET /api/v1/slots?from=…&to=…` returns the window, and `status=FREE` or `status=BUSY`
+narrows it. `GET /api/v1/slots/summary` gives the same window with neighbouring hours of
+the same status merged into blocks, so three free hours read as one `09:00`–`12:00` block.
+
+**All data is persisted.**  
+PostgreSQL. The schema is created by Flyway migrations that run on startup, so a fresh
+database and an existing one end up in the same place.
+
+### Time slots
+
+**Slots with configurable duration.**  
+Availability goes in as a real span of time (e.g. `09:00` to `12:00`) and comes back the same
+way. Inside, that span is stored as whole-hour rows, one per hour, and the summary endpoint
+puts the range back together by merging neighbours. Callers deal in ranges at both ends;
+hours are an implementation detail in between.
+
+That storage choice is what makes overlapping availability impossible. Because every row is
+the same length, two rows either sit on exactly the same hour or they do not touch at all,
+so a unique index on `(user_id, start_at)` is enough to rule overlap out. No code anywhere
+checks whether two spans collide, because they cannot.
+
+What it costs is precision. A span is rounded to the whole hours it covers, so
+`09:15`–`11:45` becomes `09:00`–`11:00`, and there is no such thing as a twenty-minute
+slot. Meetings inherit the same limit and take exactly one hour.
+
+Making the grid finer — a minute instead of an hour — is a migration rather than a rewrite,
+because nothing reasons about the length of a row, and sub-hour availability would follow
+immediately. Meetings would not: one currently claims a single row per person, and covering
+a longer stretch means claiming several at once and releasing them together. That is real
+work, and it is why the grid is an hour today.
+
+**Delete or modify existing slots.**  
+`DELETE` removes a slot, and `PATCH` changes whether it is busy or free, but there is no way
+to move one to a different hour — delete it and publish the new one. Keeping every change
+to a single statement is worth more here than an edit path that would have to release one
+row and claim another without ever landing halfway.
+
+**Mark slots busy or free.**  
+`PATCH /api/v1/slots/{id}` with `{"status":"BUSY"}` or `{"status":"FREE"}`. A slot held by
+a meeting cannot be changed this way — it answers `409` and says to cancel the meeting
+first, so a calendar can never claim someone is free while a meeting still expects them.
+
+### Meetings
+
+**Convert available slots into meetings.**  
+Booking claims the hour in every participant's calendar and marks it busy. Cancelling gives
+it back, and the hour is immediately bookable again, which is also how a meeting is changed:
+cancel it and book again. The identifier changes, so a client holding the old one has to
+read the new meeting, and that is the price of having one path through the code instead of
+two.
+
+**Title, description and participants.**  
+All three are on the booking request, and you are always a participant in a meeting you
+book, so there is no need to name yourself. Who attends is worked out from whose time is
+taken — there is no separate list of participants, so the two can never disagree. Being in
+a meeting and having that hour booked are the same fact, recorded once.
+
+The limit is that nobody can be invited who has not already published that hour as free;
+the booking fails instead. That keeps a meeting from ever existing in someone's calendar
+without their availability behind it, but a real product would want invitations that can
+sit pending.
+
+### Scale
+
+**Hundreds of users and thousands of slots.**  
+Every request costs a fixed number of queries, however large its input. Booking is one
+`UPDATE` regardless of how many people are involved, rather than one per person. Listing
+meetings fetches all their participants together instead of asking once per meeting.
+Nothing fans out into a loop of queries.
+
+The reads lean on an index that had to exist anyway: the unique constraint on
+`(user_id, start_at)` that prevents overlap is exactly the shape the calendar queries
+filter on, so it does the second job for nothing.
+
+The same idea keeps it correct under load. Nothing loads a row, inspects it and writes it
+back — the condition that has to hold is part of the statement that does the work, and
+the code looks at how many rows changed:
+
+```sql
+UPDATE time_slot SET status = 'BUSY', meeting_id = ?
+WHERE start_at = ? AND user_id IN (?) AND status = 'FREE' AND meeting_id IS NULL
 ```
 
-That is the only command needed; it runs `docker compose` itself. Note that it discards
-the local database volume first, which is what makes it repeatable.
-
-Every step declares the status it expects and marks whether it got it, ending with a
-tally; the script exits non-zero if anything misbehaved. Responses are printed exactly as
-the API returns them, with a short pause between steps so the run reads rather than
-flashes past.
-
-**CI runs it on every push**, which is why it checks itself rather than only printing.
-The unit and integration tests all run against Testcontainers, so until this existed
-nothing proved that the Compose stack starts and answers — the build only ever built the
-image. This is also where concurrent booking is guarded: act 6 is the one thing no
-in-process test reproduces faithfully.
-
-Alice publishes her morning, blocks an hour by hand, and books a standup with Bob. Carol
-misses out. Along the way it hits the interesting failures: a range that covers no whole
-hour, an hour published twice, a slot belonging to someone else, a participant who never
-published the time, an unaligned meeting start, and a cancellation by the wrong person.
-
-The last act is the one worth watching. Eight requests race for the same free hour:
-
-```
-201
-409
-409
-409
-409
-409
-409
-409
-```
-
-One booking wins because the check and the write are the same statement — see
-*A meeting is booked by one statement* below.
-
-<details>
-<summary>Full expected output</summary>
-
-```
-=========== ACT 1 — getting in
-1. health needs no key                                  200
-2. no key at all                                        401
-3. a key nobody issued                                  401
-4. a user key on an admin endpoint                      403
-5. the admin key on the same endpoint                   200
-
-=========== ACT 2 — Alice publishes her availability
-6.  09:00-12:00 becomes three hourly slots              201  ids 1,2,3
-7.  a range inside one hour                             400  "Range does not cover a whole hour"
-8.  a range ending before it starts                     400  "A range must end after it starts"
-9.  overlapping an hour she already published           409  "Slots already published for [11:00Z]"
-10. the hour after her last one                         201  id 4
-11. Bob publishes 09:00-11:00                           201  ids 5,6
-
-=========== ACT 3 — reading a calendar
-12. Alice's whole day                                   four slots, all FREE
-13. she blocks 13:00 by hand                            204
-14. status=FREE                                         09:00, 10:00, 11:00
-15. status=BUSY                                         13:00
-16. the summary                                         [09:00-12:00 FREE] [13:00-14:00 BUSY]
-17. status=MAYBE                                        400
-18. Alice touching Bob's slot                           404, not 403
-
-=========== ACT 4 — the standup
-19. Alice books 09:00 with Bob                          201  participantIds [1,2]
-20. Alice's meetings                                    the standup
-21. Bob's meetings                                      the same one, though he booked nothing
-22. Carol's meetings                                    []
-23. Carol reading it directly                           404
-24. Alice's 09:00                                       BUSY
-25. freeing a slot the meeting holds                    409  "belongs to a meeting; cancel it first"
-26. deleting it                                         409  same
-27. booking the same hour twice                         409
-28. inviting Carol, who published nothing               409  "Not everyone has a free slot"
-29. a meeting starting at 10:30                         400  "An hour must start on a whole hour"
-30. a meeting with a blank title                        400
-31. an hour Alice never published                       409
-
-=========== ACT 5 — calling it off
-32. Bob is not the organiser                            404
-33. Alice cancels                                       204
-34. her 09:00                                           FREE again
-35. the cancelled meeting                               404
-36. rebooking under a new name                          201  — this is how you edit
-
-=========== ACT 6 — two people, one hour
-37. eight requests race for 10:00                       one 201, seven 409
-38. Alice's meetings                                    exactly two
-
-=========== ACT 7 — what the service says about itself
-39. the counters this service keeps itself              3 booked, 10 refused
-40. the request timings Actuator adds for free          one line per endpoint
-41. the API describes itself, no key needed             every path
-```
-
-Meeting ids skip numbers — a rolled-back booking still consumes a sequence value, because
-Postgres sequences are not transactional.
-
-</details>
-
-## Authentication
-
-Every request except `/actuator/health` needs an API key in the `X-API-Key` header. Keys
-are stored only as SHA-256 hashes; the values below are seeded by a migration for local
-use and are not secrets.
-
-| User  | API key           | Role  |
-|-------|-------------------|-------|
-| Alice | `alice-demo-key`  | USER  |
-| Bob   | `bob-demo-key`    | USER  |
-| Carol | `carol-demo-key`  | USER  |
-| Admin | `admin-demo-key`  | ADMIN |
-
-Health is public, everything under `/actuator` requires the admin key:
-
-```bash
-curl http://localhost:8080/actuator/health
-curl -H "X-API-Key: admin-demo-key" http://localhost:8080/actuator/info
-```
-
-A missing or unknown key returns `401`; a valid key without the required role returns
-`403`.
-
-## Time slots
-
-Availability is published as whole hours. A range is split onto that grid and any partial
-hour at either end is dropped, so `09:15–11:45` becomes the slots `09:00` and `10:00`.
-
-| Method   | Path                     | Purpose                                |
-|----------|--------------------------|----------------------------------------|
-| `POST`   | `/api/v1/slots`          | publish free hours over a range        |
-| `GET`    | `/api/v1/slots`          | list your slots in a window            |
-| `GET`    | `/api/v1/slots/summary`  | the same hours merged into blocks      |
-| `PATCH`  | `/api/v1/slots/{id}`     | mark a slot busy or free               |
-| `DELETE` | `/api/v1/slots/{id}`     | withdraw a slot                        |
-
-Add `status=FREE` or `status=BUSY` to the list to see only free or only busy time; leave
-it out to see the whole calendar.
-
-```bash
-curl -X POST http://localhost:8080/api/v1/slots \
-  -H "X-API-Key: alice-demo-key" -H "Content-Type: application/json" \
-  -d '{"from":"2026-10-01T09:00:00Z","to":"2026-10-01T12:00:00Z"}'
-
-curl -H "X-API-Key: alice-demo-key" \
-  "http://localhost:8080/api/v1/slots?from=2026-10-01T00:00:00Z&to=2026-10-02T00:00:00Z"
-
-curl -H "X-API-Key: alice-demo-key" \
-  "http://localhost:8080/api/v1/slots?from=2026-10-01T00:00:00Z&to=2026-10-02T00:00:00Z&status=FREE"
-
-curl -X PATCH http://localhost:8080/api/v1/slots/1 \
-  -H "X-API-Key: alice-demo-key" -H "Content-Type: application/json" \
-  -d '{"status":"BUSY"}'
-
-curl -X DELETE http://localhost:8080/api/v1/slots/1 -H "X-API-Key: alice-demo-key"
-```
-
-The summary answers the same question in fewer lines. It merges neighbouring hours that
-share a status:
-
-```bash
-curl -H "X-API-Key: alice-demo-key" \
-  "http://localhost:8080/api/v1/slots/summary?from=2026-12-01T00:00:00Z&to=2026-12-02T00:00:00Z"
-```
-
-```json
-[
-  {"startAt":"2026-12-01T09:00:00Z","endAt":"2026-12-01T12:00:00Z","status":"FREE"},
-  {"startAt":"2026-12-01T12:00:00Z","endAt":"2026-12-01T13:00:00Z","status":"BUSY"}
-]
-```
-
-Two hours only merge if they touch, so an hour you never published splits the block in
-two — a gap means you offered nothing then, which is not the same as being busy. Blocks
-carry no ids, because a summary is not something you edit; use the list for that.
-
-Slots are per-user: every call acts on the calendar belonging to the presented key, so a
-slot owned by someone else is reported as `404` rather than `403`. Publishing a range that
-covers an hour you already published returns `409`. Errors follow RFC 7807.
-
-There is no way to move a slot to a different hour. Delete it and publish the new hour —
-the same pattern meetings use, and it keeps every change to a slot a single statement.
-
-## Meetings
-
-A meeting occupies one hour. Everyone taking part must already have published a free slot
-for it — the meeting takes those slots and marks them busy.
-
-| Method   | Path                    | Purpose                            |
-|----------|-------------------------|------------------------------------|
-| `POST`   | `/api/v1/meetings`      | book an hour as a meeting          |
-| `GET`    | `/api/v1/meetings`      | list the meetings you are in       |
-| `GET`    | `/api/v1/meetings/{id}` | read one of them                   |
-| `DELETE` | `/api/v1/meetings/{id}` | cancel it and free everyone's time |
-
-```bash
-curl -X POST http://localhost:8080/api/v1/meetings \
-  -H "X-API-Key: alice-demo-key" -H "Content-Type: application/json" \
-  -d '{"title":"Standup","description":"Daily sync",
-       "startAt":"2026-12-01T09:00:00Z","participantIds":[2]}'
-```
-
-```json
-{"id":1,"title":"Standup","description":"Daily sync",
- "startAt":"2026-12-01T09:00:00Z","endAt":"2026-12-01T10:00:00Z","participantIds":[1,2]}
-```
-
-You are always a participant in the meeting you book, so there is no need to list
-yourself. If anyone named has no free slot at that hour — because they never published
-one, or because it is already taken — the whole request fails with `409` and nothing is
-booked. A meeting is visible only to the people in it; to anyone else it is `404`.
-
-Only the organiser can cancel. Cancelling frees every participant's hour, so the time
-becomes bookable again:
-
-```bash
-curl -X DELETE http://localhost:8080/api/v1/meetings/1 -H "X-API-Key: alice-demo-key"
-```
-
-There is no way to edit a meeting. Change one by cancelling it and booking again — the
-same hour is free the moment the cancellation returns. While a meeting holds a slot, that
-slot cannot be marked free or deleted through the slot endpoints; both answer `409` and
-tell you to cancel first. That is what stops a calendar from saying someone is free while
-a meeting still expects them.
-
-## API description
-
-The service describes itself. Both are open without a key, so the API can be read before
-anyone has one:
-
-| What | Where |
-|------|-------|
-| Swagger UI | <http://localhost:8080/swagger-ui.html> |
-| OpenAPI document | <http://localhost:8080/v3/api-docs> |
-
-The `v3` there is the OpenAPI specification version, not this service's — the API is
-`v1` and says so in its own paths. It is springdoc's default and worth leaving alone,
-since tooling looks for it.
-
-The `X-API-Key` header is declared as a security scheme, so **Authorize** in Swagger UI
-takes one of the demo keys above and *Try it out* then works against the running service.
-
-The document is generated from the controllers — paths, parameters and request and
-response bodies all come from the code, so they cannot drift from it. What it does not
-list is the failure codes: springdoc sees `201` on booking a meeting but not the `409`
-when the hour is taken, because that lives in an exception handler rather than a return
-type. Those are described in the sections above, and deliberately so — which code comes
-back is a design decision worth a sentence of reasoning, not a line in a schema.
-
-## Metrics
-
-Actuator exposes `/actuator/metrics` and `/actuator/prometheus`, both behind the admin
-key like everything else under `/actuator`:
-
-```bash
-curl -H "X-API-Key: admin-demo-key" http://localhost:8080/actuator/prometheus
-```
-
-Most of what appears there is free — JVM memory and garbage collection, HikariCP pool
-usage, and `http_server_requests_seconds`, which times every endpoint broken down by URI
-and status. That last one already answers "how slow is booking" and "how many 409s are we
-returning", so there is no point measuring it again by hand.
-
-Two are added by this service, because nothing standard can know them:
-
-| Metric | Kind | What it tells you |
-|--------|------|-------------------|
-| `meetings_requested_total{outcome="booked"\|"conflict"}` | counter | how often people want the same hour |
-| `meetings_participants` | summary | how many people a typical meeting holds |
-
-After the walkthrough they read something like this:
-
-```
-meetings_requested_total{outcome="booked"} 3.0
-meetings_requested_total{outcome="conflict"} 10.0
-meetings_participants_count 3
-meetings_participants_sum 6.0
-meetings_participants_max 2.0
-```
-
-The conflict rate is the one worth watching: it is the ratio between what people ask for
-and what the calendar can give them. Note that `http_server_requests` currently reports
-the same number, since a `409` on `/api/v1/meetings` has exactly one cause today — the
-walkthrough prints both so you can see them agree. The named counter earns its place by
-saying what happened rather than where it happened: it keeps meaning if the path is
-versioned, and it stays honest the day a second thing on that endpoint returns `409`.
-`meetings_participants` has no such overlap; nothing outside the service knows how many
-people a booking held.
-
-Names are declared in Micrometer's dotted style — `meetings.requested` — and each registry
-renders them in its own convention, which is why Prometheus shows `meetings_requested_total`.
-
-## Design notes
-
-**Every slot is exactly one hour.** Any published range is normalised onto that grid.
-Uniform duration is what lets a unique index on `(user_id, start_at)` guarantee that no
-two slots overlap — two slots are then either identical or disjoint, so overlap becomes
-a uniqueness problem the database already solves. With variable durations the same
-guarantee needs a GiST exclusion constraint over ranges. The grid size is a deployment
-decision, not a structural one: a finer grid is a migration.
-
-**A meeting is booked by one statement.** Reserving an hour is a single
-`UPDATE ... WHERE start_at = ? AND user_id IN (?) AND status = 'FREE' AND meeting_id IS NULL`.
-If the number of rows it changed is not the number of participants, somebody was not free
-and the whole transaction rolls back — including the meeting row, so a failed booking
-leaves nothing behind. Because the check and the write are the same statement, two people
-racing for the same hour cannot both win: the second one changes zero rows.
-
-**Editing is cancel and rebook.** A meeting has no update endpoint. Changing the time or
-the people means cancelling and booking again, which is one path through the code instead
-of two and cannot leave a half-changed meeting behind. The cost is that the meeting gets a
-new id; for a service where a booking is an hour and a title, that is cheaper than an edit
-path that has to release some slots and claim others atomically.
-
-**Participants are the slots, not a list.** Booking writes `meeting_id` onto each
-participant's slot, so who attends is derived from whose time is taken. There is no
-participant table, which means the two can never disagree — being invited and being busy
-are one fact. It also makes attendance impossible without availability, which is the rule
-the service is built on.
-
-**Availability is computed, not stored.** Both the filter and the summary ride on the
-query that already backs the slot list — no availability table, no extra index, nothing
-to keep in step. Merging into blocks is a loop over rows that are already sorted.
-
-**The merge could have been SQL.** Postgres 14 has `range_agg`, which unions adjacent
-ranges in one statement and gets the gaps right. It was left out because it needs a native
-query. Every other query here is JPQL, which Spring Data checks when the application
-starts — a typo fails the boot, not the request. Native SQL gives that up, and the window
-is a few hundred rows at most, so the check is worth more than the cleverness.
-
-**Demo users exist only under the `demo` profile.** Their accounts and API keys live in
-`db/seed`. Flyway reads that folder only when the profile is on, and Docker Compose turns
-it on — so the keys above work right after `docker compose up`. Start without the profile
-and the database has no users at all.
-
-**The spec is generated, not annotated.** No `@Operation` or `@ApiResponse` anywhere:
-every path and schema is derived from the controller signatures and the view records, so
-the document is a projection of the code rather than a second copy of it that rots. The
-price is that failure codes are missing from it, and the price is worth paying — restating
-the whole of the sections above as annotations would double the maintenance and still say
-less, because a schema has nowhere to explain why a foreign slot answers `404` and not
-`403`.
-
-**Two custom metrics, not twenty.** Latency, error rates and pool saturation are already
-measured by Actuator, so wrapping a timer around a method that `http_server_requests`
-already times is duplication that drifts. The two added here are named for domain events
-rather than for endpoints, which is the distinction worth keeping: one counts what people
-asked the calendar for, the other how large the answer was. A Prometheus container is
-deliberately absent — the endpoint speaks the format, and where it is scraped from is a
-deployment decision.
-
-**Coverage is a minimum, not a goal.** The build fails below 85% line and branch coverage.
-It currently sits at 99% and 100%. The number proves less than it looks: repositories are
-interfaces whose SQL lives in annotations, so JaCoCo cannot see them. The rule that stops
-one user from editing another user's slots counts for nothing in the report. What actually
-covers it are tests that try the cross-user write and expect it to fail.
-
-**Each test layer mocks the layer below.** Controller tests mock the service; the service
-test mocks the repository. Repository, schema and authentication tests run against a real
-PostgreSQL container and insert their own rows with DBUnit. No test relies on the demo
-data, and the mocked ones run without Docker.
-
-**Credentials are in plain text.** Database passwords sit in `docker-compose.yml` and
-demo API keys in the seed migration, so the stack starts with no setup. Production would
-resolve both from a secrets manager and inject them as environment variables.
-
-**API keys cannot be issued or rotated through the API.** The schema supports several
-live keys per user and revocation through `revoked_at` — both deliberate, since rotation
-requires two valid keys at once — but no endpoint exercises either. Issuance and
-revocation would be the first additions.
-
-**Updates put their check in the SQL.** Instead of loading a row, checking it in Java and
-saving it back, each update and delete carries the check in the statement itself —
-`UPDATE ... WHERE id = ? AND user_id = ?` — and the code looks at how many rows changed.
-If nothing changed, the check failed and the API answers `404`. That is one query instead
-of two. It matters more once meetings exist: when the check is something that can change
-while the request is running, such as whether an hour is still free, keeping the check and
-the write in one statement stops two requests from both passing it.
-
-**Module boundaries are enforced by a test, not the compiler.** `calendar.internal` is a
-naming convention; a `public` class there would be importable from anywhere and compile
-fine. `ModularityTest` is what fails the build. Compile-time enforcement would mean
-separate Maven modules or JPMS, both heavier than a single deployable justifies. In
-practice every class inside the two `internal` packages is package-private today, so the
-compiler happens to agree — the test is what keeps it that way.
-
-**`scheduling` reaches `calendar` through one interface.** `TimeSlot` and its repository
-are package-private, so the scheduling code physically cannot touch them; it calls
-`SlotBooking`, the only thing `calendar` publishes for it. That is two methods — reserve
-an hour, and list who holds it. Both modules still share one database and one
-transaction, which is deliberate: booking has to be atomic, and splitting them into
-services would turn a single `UPDATE` into a distributed saga.
-
----
-
-API documentation and the remaining design rationale are added as the implementation
-lands.
+If the number of rows changed is not the number of participants, somebody was not free and
+the whole transaction rolls back. Two people racing for the same hour cannot both succeed,
+because the second one no longer matches the `WHERE` — nothing is locked, nothing is
+retried and there is no window between checking and writing in which things can change.
+The walkthrough demonstrates it: eight simultaneous bookings of one hour produce one `201`
+and seven `409`s.
+
+What this gives up is a rich domain model. The rules live in SQL rather than in objects,
+there is no `slot.markBusy()` to read, and the entity is deliberately thin — giving it
+behaviour would mean loading it first and re-opening the very gap this closes.
+
+### Delivery
+
+**Runnable locally with docker-compose, with all dependencies included.**  
+`docker compose up --build` starts PostgreSQL and the service. Compose waits for the
+database to be healthy before starting the service, and the service reports healthy only
+once it can reach the database.
+
+**Clear documentation of how the service can be consumed.**  
+This file, the OpenAPI document generated from the code so it cannot drift from it and
+`demo.sh`, which shows every endpoint working against a real stack.
+
+**Metrics.**  
+Actuator gives JVM, connection pool and HTTP timings for free at `/actuator/prometheus`,
+behind the admin key. Two more are kept by hand, because nothing standard can know them:
+`meetings_requested_total`, tagged `booked` or `conflict`, which shows how often people
+want the same hour, and `meetings_participants`, which shows how large meetings tend to be.
+
+**Tests.**  
+96 of them, in three layers. Controller tests mock the service and check what it was asked
+to do. The service test mocks the repository. Repository and schema tests run against a
+real PostgreSQL container with fixed datasets. The build fails below 85% coverage; it
+currently sits at 99% of lines and 100% of branches. On top of that, `demo.sh` runs the
+whole API against a real stack on every push.
+
+## Also worth mentioning
+
+**API keys.**  
+A personal calendar has to know whose calendar it is. Keys are stored only as hashes, and
+there are two roles so that metrics are not public. There is no way to issue or rotate a
+key through the API — that would be the first thing to add.
+
+**Module boundaries, with Spring Modulith.**  
+The code is split into `identity`, `calendar` and `scheduling`. Each keeps its internals
+package-private, so the compiler stops one reaching into another, and `scheduling` can only
+book time through the small interface `calendar` publishes. Spring Modulith checks the
+boundaries hold and fails the build when one is crossed, which is what keeps the split
+honest as the code grows — a naming convention alone would not.
+
+**A runnable walkthrough.**  
+`demo.sh` exists because a list of endpoints is not proof. It doubles as the integration
+test in CI, and it is the only thing that checks the running stack starts and answers.
+
+**Readable errors.**  
+Every failure returns a JSON body saying what went wrong, rather than a bare status code.
