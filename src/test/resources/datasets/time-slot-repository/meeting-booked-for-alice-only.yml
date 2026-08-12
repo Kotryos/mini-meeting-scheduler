@@ -1,0 +1,9 @@
+time_slot:
+  - id: 1000
+    user_id: 1
+    status: "BUSY"
+    meeting_id: 500
+  - id: 1001
+    user_id: 2
+    status: "BUSY"
+    meeting_id: null

@@ -1,0 +1,11 @@
+users:
+  - id: 1
+    email: "alice@example.com"
+    display_name: "Alice"
+
+meeting:
+  - id: 500
+    organizer_id: 1
+    title: "Standup"
+    description: "Daily sync"
+    start_at: "2026-11-01 09:00:00"

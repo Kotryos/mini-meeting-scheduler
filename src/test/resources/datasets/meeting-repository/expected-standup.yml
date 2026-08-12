@@ -1,0 +1,5 @@
+meeting:
+  - organizer_id: 1
+    title: "Standup"
+    description: "Daily sync"
+    start_at: "2026-11-01 09:00:00"

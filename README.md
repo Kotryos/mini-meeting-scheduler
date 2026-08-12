@@ -16,9 +16,9 @@ calendar can be viewed over a chosen time frame.
 **Time slot management** — publish availability over any range, which is split into
 whole-hour slots; delete slots, or mark them busy to block time.
 
-**Meeting scheduling** — convert available slots into a meeting with a title,
-description and participants. A meeting spans one or more consecutive hours and marks
-that time busy for everyone involved.
+**Meeting scheduling** — turn a free hour into a meeting with a title, description and
+participants. Everyone involved must be free at that hour, and the meeting marks the
+time busy in each of their calendars.
 
 **Availability** — view your own calendar over a selected time frame, narrowed to just
 the free or just the busy time, or summarised into merged blocks.
@@ -130,6 +130,51 @@ Slots are per-user: every call acts on the calendar belonging to the presented k
 slot owned by someone else is reported as `404` rather than `403`. Publishing a range that
 covers an hour you already published returns `409`. Errors follow RFC 7807.
 
+There is no way to move a slot to a different hour. Delete it and publish the new hour —
+the same pattern meetings use, and it keeps every change to a slot a single statement.
+
+## Meetings
+
+A meeting occupies one hour. Everyone taking part must already have published a free slot
+for it — the meeting takes those slots and marks them busy.
+
+| Method   | Path                    | Purpose                            |
+|----------|-------------------------|------------------------------------|
+| `POST`   | `/api/v1/meetings`      | book an hour as a meeting          |
+| `GET`    | `/api/v1/meetings`      | list the meetings you are in       |
+| `GET`    | `/api/v1/meetings/{id}` | read one of them                   |
+| `DELETE` | `/api/v1/meetings/{id}` | cancel it and free everyone's time |
+
+```bash
+curl -X POST http://localhost:8080/api/v1/meetings \
+  -H "X-API-Key: alice-demo-key" -H "Content-Type: application/json" \
+  -d '{"title":"Standup","description":"Daily sync",
+       "startAt":"2026-12-01T09:00:00Z","participantIds":[2]}'
+```
+
+```json
+{"id":1,"title":"Standup","description":"Daily sync",
+ "startAt":"2026-12-01T09:00:00Z","endAt":"2026-12-01T10:00:00Z","participantIds":[1,2]}
+```
+
+You are always a participant in the meeting you book, so there is no need to list
+yourself. If anyone named has no free slot at that hour — because they never published
+one, or because it is already taken — the whole request fails with `409` and nothing is
+booked. A meeting is visible only to the people in it; to anyone else it is `404`.
+
+Only the organiser can cancel. Cancelling frees every participant's hour, so the time
+becomes bookable again:
+
+```bash
+curl -X DELETE http://localhost:8080/api/v1/meetings/1 -H "X-API-Key: alice-demo-key"
+```
+
+There is no way to edit a meeting. Change one by cancelling it and booking again — the
+same hour is free the moment the cancellation returns. While a meeting holds a slot, that
+slot cannot be marked free or deleted through the slot endpoints; both answer `409` and
+tell you to cancel first. That is what stops a calendar from saying someone is free while
+a meeting still expects them.
+
 ## Design notes
 
 **Every slot is exactly one hour.** Any published range is normalised onto that grid.
@@ -138,6 +183,25 @@ two slots overlap — two slots are then either identical or disjoint, so overla
 a uniqueness problem the database already solves. With variable durations the same
 guarantee needs a GiST exclusion constraint over ranges. The grid size is a deployment
 decision, not a structural one: a finer grid is a migration.
+
+**A meeting is booked by one statement.** Reserving an hour is a single
+`UPDATE ... WHERE start_at = ? AND user_id IN (?) AND status = 'FREE' AND meeting_id IS NULL`.
+If the number of rows it changed is not the number of participants, somebody was not free
+and the whole transaction rolls back — including the meeting row, so a failed booking
+leaves nothing behind. Because the check and the write are the same statement, two people
+racing for the same hour cannot both win: the second one changes zero rows.
+
+**Editing is cancel and rebook.** A meeting has no update endpoint. Changing the time or
+the people means cancelling and booking again, which is one path through the code instead
+of two and cannot leave a half-changed meeting behind. The cost is that the meeting gets a
+new id; for a service where a booking is an hour and a title, that is cheaper than an edit
+path that has to release some slots and claim others atomically.
+
+**Participants are the slots, not a list.** Booking writes `meeting_id` onto each
+participant's slot, so who attends is derived from whose time is taken. There is no
+participant table, which means the two can never disagree — being invited and being busy
+are one fact. It also makes attendance impossible without availability, which is the rule
+the service is built on.
 
 **Availability is computed, not stored.** Both the filter and the summary ride on the
 query that already backs the slot list — no availability table, no extra index, nothing
@@ -155,7 +219,7 @@ it on — so the keys above work right after `docker compose up`. Start without 
 and the database has no users at all.
 
 **Coverage is a minimum, not a goal.** The build fails below 85% line and branch coverage.
-It currently sits at 98% and 100%. The number proves less than it looks: repositories are
+It currently sits at 99% and 100%. The number proves less than it looks: repositories are
 interfaces whose SQL lives in annotations, so JaCoCo cannot see them. The rule that stops
 one user from editing another user's slots counts for nothing in the report. What actually
 covers it are tests that try the cross-user write and expect it to fail.
@@ -183,9 +247,18 @@ while the request is running, such as whether an hour is still free, keeping the
 the write in one statement stops two requests from both passing it.
 
 **Module boundaries are enforced by a test, not the compiler.** `calendar.internal` is a
-naming convention; a `public` class there is importable from anywhere and compiles fine.
-`ModularityTest` is what fails the build. Compile-time enforcement would mean separate
-Maven modules or JPMS, both heavier than a single deployable justifies.
+naming convention; a `public` class there would be importable from anywhere and compile
+fine. `ModularityTest` is what fails the build. Compile-time enforcement would mean
+separate Maven modules or JPMS, both heavier than a single deployable justifies. In
+practice every class inside the two `internal` packages is package-private today, so the
+compiler happens to agree — the test is what keeps it that way.
+
+**`scheduling` reaches `calendar` through one interface.** `TimeSlot` and its repository
+are package-private, so the scheduling code physically cannot touch them; it calls
+`SlotBooking`, the only thing `calendar` publishes for it. That is two methods — reserve
+an hour, and list who holds it. Both modules still share one database and one
+transaction, which is deliberate: booking has to be atomic, and splitting them into
+services would turn a single `UPDATE` into a distributed saga.
 
 ---
 

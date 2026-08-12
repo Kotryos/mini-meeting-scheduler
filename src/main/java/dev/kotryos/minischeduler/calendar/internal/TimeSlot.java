@@ -34,6 +34,9 @@ class TimeSlot {
     @Column(name = "status", nullable = false)
     private SlotStatus status;
 
+    @Column(name = "meeting_id")
+    private Long meetingId;
+
     protected TimeSlot() {
     }
 
@@ -54,8 +57,22 @@ class TimeSlot {
         return slot;
     }
 
+    static TimeSlot booked(Long id, Long userId, Hour hour, Long meetingId) {
+        var slot = stored(id, userId, hour, SlotStatus.BUSY);
+        slot.meetingId = meetingId;
+        return slot;
+    }
+
     public Long id() {
         return id;
+    }
+
+    Long userId() {
+        return userId;
+    }
+
+    Long meetingId() {
+        return meetingId;
     }
 
     public Hour hour() {

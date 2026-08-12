@@ -38,12 +38,51 @@ interface TimeSlotRepository extends Repository<TimeSlot, Long> {
                                  @Param("starts") Collection<Instant> starts);
 
     @Modifying
-    @Query("update TimeSlot s set s.status = :status where s.id = :id and s.userId = :userId")
+    @Query("""
+            update TimeSlot s set s.status = SlotStatus.BUSY, s.meetingId = :meetingId
+            where s.startAt = :startAt and s.userId in :userIds
+              and s.status = SlotStatus.FREE and s.meetingId is null
+            """)
+    int book(@Param("meetingId") long meetingId,
+             @Param("startAt") Instant startAt,
+             @Param("userIds") Collection<Long> userIds);
+
+    @Modifying
+    @Query("""
+            update TimeSlot s set s.status = SlotStatus.FREE, s.meetingId = null
+            where s.meetingId = :meetingId
+            """)
+    int release(@Param("meetingId") long meetingId);
+
+    @Query("""
+            select distinct s.meetingId from TimeSlot s
+            where s.userId = :userId and s.meetingId is not null
+            """)
+    List<Long> findMeetingIds(@Param("userId") long userId);
+
+    @Query("""
+            select s from TimeSlot s
+            where s.meetingId in :meetingIds
+            order by s.meetingId, s.userId
+            """)
+    List<TimeSlot> findByMeetings(@Param("meetingIds") Collection<Long> meetingIds);
+
+    @Query("""
+            select count(s) > 0 from TimeSlot s
+            where s.id = :id and s.userId = :userId and s.meetingId is not null
+            """)
+    boolean isBooked(@Param("id") long id, @Param("userId") long userId);
+
+    @Modifying
+    @Query("""
+            update TimeSlot s set s.status = :status
+            where s.id = :id and s.userId = :userId and s.meetingId is null
+            """)
     int updateStatus(@Param("id") long id,
                      @Param("userId") long userId,
                      @Param("status") SlotStatus status);
 
     @Modifying
-    @Query("delete from TimeSlot s where s.id = :id and s.userId = :userId")
+    @Query("delete from TimeSlot s where s.id = :id and s.userId = :userId and s.meetingId is null")
     int deleteOwned(@Param("id") long id, @Param("userId") long userId);
 }

@@ -1,0 +1,25 @@
+users:
+  - id: 1
+    email: "alice@example.com"
+    display_name: "Alice"
+  - id: 2
+    email: "bob@example.com"
+    display_name: "Bob"
+
+meeting:
+  - id: 500
+    organizer_id: 1
+    title: "Standup"
+    start_at: "2026-11-01 09:00:00"
+
+time_slot:
+  - id: 1000
+    user_id: 1
+    start_at: "2026-11-01 09:00:00"
+    end_at: "2026-11-01 10:00:00"
+    status: "FREE"
+  - id: 1001
+    user_id: 2
+    start_at: "2026-11-01 09:00:00"
+    end_at: "2026-11-01 10:00:00"
+    status: "FREE"

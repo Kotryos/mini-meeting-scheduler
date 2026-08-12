@@ -27,6 +27,7 @@ class TimeSlotRepositoryTest {
     private static final long BOB = 2;
     private static final long ALICE_SLOT = 1000;
     private static final long BOB_SLOT = 1001;
+    private static final long MEETING = 500;
 
     @Autowired
     private TimeSlotRepository repository;
@@ -73,6 +74,84 @@ class TimeSlotRepositoryTest {
 
         // then
         assertThat(taken).containsExactly(at("09:00"));
+    }
+
+    @Test
+    @DataSet("datasets/time-slot-repository/meeting-with-alice-and-bob-free.yml")
+    @ExpectedDataSet("datasets/time-slot-repository/meeting-booked-for-both.yml")
+    void book_everyoneFree_marksThemAllBusyForTheMeeting() {
+        // when
+        int booked = inTransaction(() -> repository.book(MEETING, at("09:00"), List.of(ALICE, BOB)));
+
+        // then
+        assertThat(booked).isEqualTo(2);
+    }
+
+    @Test
+    @DataSet("datasets/time-slot-repository/meeting-with-bob-already-busy.yml")
+    @ExpectedDataSet("datasets/time-slot-repository/meeting-booked-for-alice-only.yml")
+    void book_someoneAlreadyBusy_leavesThemAloneAndReportsTheShortfall() {
+        // when
+        int booked = inTransaction(() -> repository.book(MEETING, at("09:00"), List.of(ALICE, BOB)));
+
+        // then
+        assertThat(booked).isOne();
+    }
+
+    @Test
+    @DataSet("datasets/time-slot-repository/meeting-booked-for-both-in-full.yml")
+    @ExpectedDataSet("datasets/time-slot-repository/expected-alice-and-bob-free-at-nine.yml")
+    void release_meetingId_freesEverySlotItHolds() {
+        // when
+        int freed = inTransaction(() -> repository.release(MEETING));
+
+        // then
+        assertThat(freed).isEqualTo(2);
+    }
+
+    @Test
+    @DataSet("datasets/time-slot-repository/meeting-booked-for-both-in-full.yml")
+    void deleteOwned_slotBookedIntoAMeeting_changesNothing() {
+        // when
+        int affected = inTransaction(() -> repository.deleteOwned(ALICE_SLOT, ALICE));
+
+        // then
+        assertThat(affected).isZero();
+        assertThat(repository.isBooked(ALICE_SLOT, ALICE)).isTrue();
+    }
+
+    @Test
+    @DataSet("datasets/time-slot-repository/alice-and-bob-free-at-nine.yml")
+    void isBooked_freeSlot_isFalse() {
+        // when / then
+        assertThat(repository.isBooked(ALICE_SLOT, ALICE)).isFalse();
+    }
+
+    @Test
+    @DataSet("datasets/time-slot-repository/meeting-booked-for-both-in-full.yml")
+    void findByMeetings_slotsPointingAtTheMeeting_returnsThemOwnerByOwner() {
+        // when
+        List<TimeSlot> held = repository.findByMeetings(List.of(MEETING));
+
+        // then
+        assertThat(held).extracting(TimeSlot::userId).containsExactly(ALICE, BOB);
+    }
+
+    @Test
+    @DataSet("datasets/time-slot-repository/meeting-booked-for-both-in-full.yml")
+    void findMeetingIds_userHoldingABookedSlot_returnsItsMeeting() {
+        // when
+        List<Long> ids = repository.findMeetingIds(ALICE);
+
+        // then
+        assertThat(ids).containsExactly(MEETING);
+    }
+
+    @Test
+    @DataSet("datasets/time-slot-repository/alice-and-bob-free-at-nine.yml")
+    void findMeetingIds_userWithOnlyFreeSlots_returnsNothing() {
+        // when / then
+        assertThat(repository.findMeetingIds(ALICE)).isEmpty();
     }
 
     @Test

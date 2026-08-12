@@ -1,16 +1,22 @@
 package dev.kotryos.minischeduler.calendar.internal;
 
 import dev.kotryos.minischeduler.calendar.Hour;
+import dev.kotryos.minischeduler.calendar.HourNotFreeException;
+import dev.kotryos.minischeduler.calendar.SlotBooking;
 import dev.kotryos.minischeduler.calendar.SlotStatus;
 import dev.kotryos.minischeduler.calendar.TimeRange;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 @Service
-class SlotService {
+class SlotService implements SlotBooking {
 
     private final TimeSlotRepository slots;
 
@@ -59,18 +65,55 @@ class SlotService {
         return List.copyOf(blocks);
     }
 
+    @Override
+    @Transactional
+    public void book(long meetingId, Hour hour, Set<Long> userIds) {
+        var booked = slots.book(meetingId, hour.start(), userIds);
+        if (booked != userIds.size()) {
+            throw new HourNotFreeException("Not everyone has a free slot at " + hour.start());
+        }
+    }
+
+    @Override
+    @Transactional
+    public void release(long meetingId) {
+        slots.release(meetingId);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<Long> meetingsOf(long userId) {
+        return slots.findMeetingIds(userId);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Map<Long, List<Long>> participantsOf(Collection<Long> meetingIds) {
+        var byMeeting = new LinkedHashMap<Long, List<Long>>();
+        for (var slot : slots.findByMeetings(meetingIds)) {
+            byMeeting.computeIfAbsent(slot.meetingId(), id -> new ArrayList<>()).add(slot.userId());
+        }
+        return byMeeting;
+    }
+
     @Transactional
     void changeStatus(long userId, long slotId, SlotStatus status) {
         if (slots.updateStatus(slotId, userId, status) == 0) {
-            throw new SlotNotFoundException(slotId);
+            throw missing(userId, slotId);
         }
     }
 
     @Transactional
     void delete(long userId, long slotId) {
         if (slots.deleteOwned(slotId, userId) == 0) {
-            throw new SlotNotFoundException(slotId);
+            throw missing(userId, slotId);
         }
+    }
+
+    private RuntimeException missing(long userId, long slotId) {
+        return slots.isBooked(slotId, userId)
+                ? new SlotConflictException("Slot " + slotId + " belongs to a meeting; cancel it first")
+                : new SlotNotFoundException(slotId);
     }
 
     private static SlotView view(TimeSlot slot) {
