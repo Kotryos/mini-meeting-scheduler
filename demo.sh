@@ -229,7 +229,7 @@ sleep "$PACE"
 step "so Alice ends up in" 200 "exactly two meetings"
 body -H "$ALICE" $API/api/v1/meetings
 
-act "ACT 7 — what the run left behind"
+act "ACT 7 — what the service says about itself"
 
 # Same shape as body(), but the scrape is hundreds of lines, so each step keeps its own.
 metrics() {
@@ -246,6 +246,12 @@ metrics '^meetings_'
 
 step "the request timings Actuator adds for free" 200 "one line per endpoint"
 metrics '^http_server_requests_seconds_count.*/api/v1/'
+
+step "the API describes itself, and needs no key to do it" 200 "every path"
+spec=$(curl -s -w $'\n%{http_code}' $API/v3/api-docs)
+verdict "${spec##*$'\n'}"
+echo "${spec%$'\n'*}" | grep -o '"/api/v1[^"]*"' | sort -u | sed 's/^/      /' || true
+sleep "$PACE"
 
 echo ""
 if [ "$failures" -eq 0 ]; then

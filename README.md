@@ -52,7 +52,7 @@ service runs on.
 
 ## Walkthrough
 
-One script exercises the whole API — 40 requests in seven acts, using the demo keys below.
+One script exercises the whole API — 41 requests in seven acts, using the demo keys below.
 It starts its own stack from an empty database, so the output is the same every time:
 
 ```bash
@@ -148,9 +148,10 @@ One booking wins because the check and the write are the same statement — see
 37. eight requests race for 10:00                       one 201, seven 409
 38. Alice's meetings                                    exactly two
 
-=========== ACT 7 — what the run left behind
+=========== ACT 7 — what the service says about itself
 39. the counters this service keeps itself              3 booked, 10 refused
 40. the request timings Actuator adds for free          one line per endpoint
+41. the API describes itself, no key needed             every path
 ```
 
 Meeting ids skip numbers — a rolled-back booking still consumes a sequence value, because
@@ -283,6 +284,30 @@ slot cannot be marked free or deleted through the slot endpoints; both answer `4
 tell you to cancel first. That is what stops a calendar from saying someone is free while
 a meeting still expects them.
 
+## API description
+
+The service describes itself. Both are open without a key, so the API can be read before
+anyone has one:
+
+| What | Where |
+|------|-------|
+| Swagger UI | <http://localhost:8080/swagger-ui.html> |
+| OpenAPI document | <http://localhost:8080/v3/api-docs> |
+
+The `v3` there is the OpenAPI specification version, not this service's — the API is
+`v1` and says so in its own paths. It is springdoc's default and worth leaving alone,
+since tooling looks for it.
+
+The `X-API-Key` header is declared as a security scheme, so **Authorize** in Swagger UI
+takes one of the demo keys above and *Try it out* then works against the running service.
+
+The document is generated from the controllers — paths, parameters and request and
+response bodies all come from the code, so they cannot drift from it. What it does not
+list is the failure codes: springdoc sees `201` on booking a meeting but not the `409`
+when the hour is taken, because that lives in an exception handler rather than a return
+type. Those are described in the sections above, and deliberately so — which code comes
+back is a design decision worth a sentence of reasoning, not a line in a schema.
+
 ## Metrics
 
 Actuator exposes `/actuator/metrics` and `/actuator/prometheus`, both behind the admin
@@ -368,6 +393,14 @@ is a few hundred rows at most, so the check is worth more than the cleverness.
 `db/seed`. Flyway reads that folder only when the profile is on, and Docker Compose turns
 it on — so the keys above work right after `docker compose up`. Start without the profile
 and the database has no users at all.
+
+**The spec is generated, not annotated.** No `@Operation` or `@ApiResponse` anywhere:
+every path and schema is derived from the controller signatures and the view records, so
+the document is a projection of the code rather than a second copy of it that rots. The
+price is that failure codes are missing from it, and the price is worth paying — restating
+the whole of the sections above as annotations would double the maintenance and still say
+less, because a schema has nowhere to explain why a foreign slot answers `404` and not
+`403`.
 
 **Two custom metrics, not twenty.** Latency, error rates and pool saturation are already
 measured by Actuator, so wrapping a timer around a method that `http_server_requests`
