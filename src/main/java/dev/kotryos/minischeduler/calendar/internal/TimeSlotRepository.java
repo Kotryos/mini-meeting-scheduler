@@ -23,6 +23,16 @@ interface TimeSlotRepository extends Repository<TimeSlot, Long> {
                                 @Param("from") Instant from,
                                 @Param("to") Instant to);
 
+    @Query("""
+            select s from TimeSlot s
+            where s.userId = :userId and s.startAt >= :from and s.startAt < :to and s.status = :status
+            order by s.startAt
+            """)
+    List<TimeSlot> findInWindowWithStatus(@Param("userId") long userId,
+                                          @Param("from") Instant from,
+                                          @Param("to") Instant to,
+                                          @Param("status") SlotStatus status);
+
     @Query("select s.startAt from TimeSlot s where s.userId = :userId and s.startAt in :starts")
     List<Instant> findTakenHours(@Param("userId") long userId,
                                  @Param("starts") Collection<Instant> starts);

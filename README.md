@@ -8,9 +8,8 @@
 
 Users publish the time slots during which they are available. Any of those slots can be
 turned into a meeting with a title, a description and participants. Every user has a
-personal calendar tracking which of their time is free and which is taken, and
-availability can be queried over a chosen time frame — for one person or for several at
-once, so a time that works for everybody can be found.
+personal calendar tracking which of their time is free and which is taken, and that
+calendar can be viewed over a chosen time frame.
 
 ## Capabilities
 
@@ -21,8 +20,8 @@ whole-hour slots; delete slots, or mark them busy to block time.
 description and participants. A meeting spans one or more consecutive hours and marks
 that time busy for everyone involved.
 
-**Availability** — query free and busy time for one or more users across a selected time
-frame, aggregated into a single view.
+**Availability** — view your own calendar over a selected time frame, narrowed to just
+the free or just the busy time, or summarised into merged blocks.
 
 ## Running locally
 
@@ -79,12 +78,16 @@ A missing or unknown key returns `401`; a valid key without the required role re
 Availability is published as whole hours. A range is split onto that grid and any partial
 hour at either end is dropped, so `09:15–11:45` becomes the slots `09:00` and `10:00`.
 
-| Method   | Path                   | Purpose                            |
-|----------|------------------------|------------------------------------|
-| `POST`   | `/api/v1/slots`        | publish free hours over a range    |
-| `GET`    | `/api/v1/slots`        | list your own slots in a window    |
-| `PATCH`  | `/api/v1/slots/{id}`   | mark a slot busy or free           |
-| `DELETE` | `/api/v1/slots/{id}`   | withdraw a slot                    |
+| Method   | Path                     | Purpose                                |
+|----------|--------------------------|----------------------------------------|
+| `POST`   | `/api/v1/slots`          | publish free hours over a range        |
+| `GET`    | `/api/v1/slots`          | list your slots in a window            |
+| `GET`    | `/api/v1/slots/summary`  | the same hours merged into blocks      |
+| `PATCH`  | `/api/v1/slots/{id}`     | mark a slot busy or free               |
+| `DELETE` | `/api/v1/slots/{id}`     | withdraw a slot                        |
+
+Add `status=FREE` or `status=BUSY` to the list to see only free or only busy time; leave
+it out to see the whole calendar.
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/slots \
@@ -94,6 +97,9 @@ curl -X POST http://localhost:8080/api/v1/slots \
 curl -H "X-API-Key: alice-demo-key" \
   "http://localhost:8080/api/v1/slots?from=2026-10-01T00:00:00Z&to=2026-10-02T00:00:00Z"
 
+curl -H "X-API-Key: alice-demo-key" \
+  "http://localhost:8080/api/v1/slots?from=2026-10-01T00:00:00Z&to=2026-10-02T00:00:00Z&status=FREE"
+
 curl -X PATCH http://localhost:8080/api/v1/slots/1 \
   -H "X-API-Key: alice-demo-key" -H "Content-Type: application/json" \
   -d '{"status":"BUSY"}'
@@ -101,18 +107,47 @@ curl -X PATCH http://localhost:8080/api/v1/slots/1 \
 curl -X DELETE http://localhost:8080/api/v1/slots/1 -H "X-API-Key: alice-demo-key"
 ```
 
+The summary answers the same question in fewer lines. It merges neighbouring hours that
+share a status:
+
+```bash
+curl -H "X-API-Key: alice-demo-key" \
+  "http://localhost:8080/api/v1/slots/summary?from=2026-12-01T00:00:00Z&to=2026-12-02T00:00:00Z"
+```
+
+```json
+[
+  {"startAt":"2026-12-01T09:00:00Z","endAt":"2026-12-01T12:00:00Z","status":"FREE"},
+  {"startAt":"2026-12-01T12:00:00Z","endAt":"2026-12-01T13:00:00Z","status":"BUSY"}
+]
+```
+
+Two hours only merge if they touch, so an hour you never published splits the block in
+two — a gap means you offered nothing then, which is not the same as being busy. Blocks
+carry no ids, because a summary is not something you edit; use the list for that.
+
 Slots are per-user: every call acts on the calendar belonging to the presented key, so a
 slot owned by someone else is reported as `404` rather than `403`. Publishing a range that
 covers an hour you already published returns `409`. Errors follow RFC 7807.
 
 ## Design notes
 
-**Slots are fixed one-hour blocks.** Any published range is normalised onto that grid.
+**Every slot is exactly one hour.** Any published range is normalised onto that grid.
 Uniform duration is what lets a unique index on `(user_id, start_at)` guarantee that no
-two slots overlap — two blocks are then either identical or disjoint, so overlap becomes
+two slots overlap — two slots are then either identical or disjoint, so overlap becomes
 a uniqueness problem the database already solves. With variable durations the same
 guarantee needs a GiST exclusion constraint over ranges. The grid size is a deployment
 decision, not a structural one: a finer grid is a migration.
+
+**Availability is computed, not stored.** Both the filter and the summary ride on the
+query that already backs the slot list — no availability table, no extra index, nothing
+to keep in step. Merging into blocks is a loop over rows that are already sorted.
+
+**The merge could have been SQL.** Postgres 14 has `range_agg`, which unions adjacent
+ranges in one statement and gets the gaps right. It was left out because it needs a native
+query. Every other query here is JPQL, which Spring Data checks when the application
+starts — a typo fails the boot, not the request. Native SQL gives that up, and the window
+is a few hundred rows at most, so the check is worth more than the cleverness.
 
 **Demo users exist only under the `demo` profile.** Their accounts and API keys live in
 `db/seed`. Flyway reads that folder only when the profile is on, and Docker Compose turns
@@ -120,7 +155,7 @@ it on — so the keys above work right after `docker compose up`. Start without 
 and the database has no users at all.
 
 **Coverage is a minimum, not a goal.** The build fails below 85% line and branch coverage.
-It currently sits at 95% and 100%. The number proves less than it looks: repositories are
+It currently sits at 98% and 100%. The number proves less than it looks: repositories are
 interfaces whose SQL lives in annotations, so JaCoCo cannot see them. The rule that stops
 one user from editing another user's slots counts for nothing in the report. What actually
 covers it are tests that try the cross-user write and expect it to fail.

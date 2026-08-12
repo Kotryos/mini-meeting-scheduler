@@ -33,22 +33,24 @@ class SlotController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    List<SlotResponse> publish(@AuthenticationPrincipal CurrentUser user,
-                               @Valid @RequestBody PublishRequest request) {
-        return slots.publish(user.id(), new TimeRange(request.from(), request.to()))
-                .stream()
-                .map(SlotResponse::of)
-                .toList();
+    List<SlotView> publish(@AuthenticationPrincipal CurrentUser user,
+                           @Valid @RequestBody PublishRequest request) {
+        return slots.publish(user.id(), new TimeRange(request.from(), request.to()));
     }
 
     @GetMapping
-    List<SlotResponse> list(@AuthenticationPrincipal CurrentUser user,
-                            @RequestParam Instant from,
-                            @RequestParam Instant to) {
-        return slots.list(user.id(), from, to)
-                .stream()
-                .map(SlotResponse::of)
-                .toList();
+    List<SlotView> list(@AuthenticationPrincipal CurrentUser user,
+                        @RequestParam Instant from,
+                        @RequestParam Instant to,
+                        @RequestParam(required = false) SlotStatus status) {
+        return slots.list(user.id(), new TimeRange(from, to), status);
+    }
+
+    @GetMapping("/summary")
+    List<AggregatedSlotView> summary(@AuthenticationPrincipal CurrentUser user,
+                                 @RequestParam Instant from,
+                                 @RequestParam Instant to) {
+        return slots.summary(user.id(), new TimeRange(from, to));
     }
 
     @PatchMapping("/{id}")
@@ -69,12 +71,5 @@ class SlotController {
     }
 
     record StatusRequest(@NotNull SlotStatus status) {
-    }
-
-    record SlotResponse(long id, Instant startAt, Instant endAt, SlotStatus status) {
-
-        static SlotResponse of(TimeSlot slot) {
-            return new SlotResponse(slot.id(), slot.hour().start(), slot.hour().end(), slot.status());
-        }
     }
 }

@@ -55,6 +55,17 @@ class TimeSlotRepositoryTest {
     }
 
     @Test
+    @DataSet("datasets/time-slot-repository/alice-free-and-busy.yml")
+    void findInWindowWithStatus_windowHoldingBothStatuses_returnsOnlyTheAskedFor() {
+        // when
+        List<TimeSlot> found = repository.findInWindowWithStatus(
+                ALICE, at("09:00"), at("12:00"), SlotStatus.BUSY);
+
+        // then
+        assertThat(found).extracting(slot -> slot.hour().start()).containsExactly(at("10:00"));
+    }
+
+    @Test
     @DataSet("datasets/time-slot-repository/alice-and-bob-free-at-nine.yml")
     void findTakenHours_someOfTheHoursAlreadyPublished_returnsOnlyThose() {
         // when

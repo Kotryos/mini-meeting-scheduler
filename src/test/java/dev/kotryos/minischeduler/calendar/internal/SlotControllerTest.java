@@ -1,6 +1,5 @@
 package dev.kotryos.minischeduler.calendar.internal;
 
-import dev.kotryos.minischeduler.calendar.Hour;
 import dev.kotryos.minischeduler.calendar.SlotStatus;
 import dev.kotryos.minischeduler.calendar.TimeRange;
 import dev.kotryos.minischeduler.identity.CurrentUser;
@@ -46,7 +45,7 @@ class SlotControllerTest {
     @Test
     void publish_validRange_forwardsItToTheServiceAndReturnsCreated() throws Exception {
         // given
-        var published = TimeSlot.stored(ALICE_SLOT, ALICE, new Hour(at("09:00")), SlotStatus.FREE);
+        var published = new SlotView(ALICE_SLOT, at("09:00"), at("10:00"), SlotStatus.FREE);
         given(slots.publish(anyLong(), any())).willReturn(List.of(published));
 
         // when
@@ -138,7 +137,46 @@ class SlotControllerTest {
                 .andExpect(status().isOk());
 
         // then
-        verify(slots).list(ALICE, Instant.parse("2026-11-01T00:00:00Z"), Instant.parse("2026-11-02T00:00:00Z"));
+        verify(slots).list(ALICE, new TimeRange(
+                Instant.parse("2026-11-01T00:00:00Z"), Instant.parse("2026-11-02T00:00:00Z")), null);
+    }
+
+    @Test
+    void list_statusGivenAsParameter_forwardsItToTheService() throws Exception {
+        // given
+        given(slots.list(anyLong(), any(), any())).willReturn(List.of());
+
+        // when
+        mockMvc.perform(get("/api/v1/slots")
+                        .with(authentication(alice()))
+                        .param("from", "2026-11-01T00:00:00Z")
+                        .param("to", "2026-11-02T00:00:00Z")
+                        .param("status", "FREE"))
+                .andExpect(status().isOk());
+
+        // then
+        verify(slots).list(ALICE, new TimeRange(
+                Instant.parse("2026-11-01T00:00:00Z"), Instant.parse("2026-11-02T00:00:00Z")), SlotStatus.FREE);
+    }
+
+    @Test
+    void summary_windowGivenAsParameters_returnsTheMergedBlocks() throws Exception {
+        // given
+        given(slots.summary(anyLong(), any())).willReturn(List.of(
+                new AggregatedSlotView(at("09:00"), at("12:00"), SlotStatus.FREE)));
+
+        // when
+        mockMvc.perform(get("/api/v1/slots/summary")
+                        .with(authentication(alice()))
+                        .param("from", "2026-11-01T09:00:00Z")
+                        .param("to", "2026-11-01T12:00:00Z"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].startAt").value("2026-11-01T09:00:00Z"))
+                .andExpect(jsonPath("$[0].endAt").value("2026-11-01T12:00:00Z"))
+                .andExpect(jsonPath("$[0].status").value("FREE"));
+
+        // then
+        verify(slots).summary(ALICE, new TimeRange(at("09:00"), at("12:00")));
     }
 
     @Test
@@ -153,6 +191,16 @@ class SlotControllerTest {
 
         // then
         verify(slots).changeStatus(ALICE, 42, SlotStatus.BUSY);
+    }
+
+    @Test
+    void delete_ownSlot_forwardsItToTheService() throws Exception {
+        // when
+        mockMvc.perform(delete("/api/v1/slots/{id}", 42).with(authentication(alice())).with(csrf()))
+                .andExpect(status().isNoContent());
+
+        // then
+        verify(slots).delete(ALICE, 42);
     }
 
     @Test

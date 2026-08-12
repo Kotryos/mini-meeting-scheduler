@@ -6,21 +6,21 @@ users:
 time_slot:
   - id: 1000
     user_id: 1
-    start_at: "2026-11-01 08:00:00"
-    end_at: "2026-11-01 09:00:00"
-    status: "FREE"
-  - id: 1001
-    user_id: 1
-    start_at: "2026-11-01 09:00:00"
-    end_at: "2026-11-01 10:00:00"
-    status: "FREE"
-  - id: 1002
-    user_id: 1
     start_at: "2026-11-01 10:00:00"
     end_at: "2026-11-01 11:00:00"
     status: "FREE"
-  - id: 1003
+  - id: 1001
+    user_id: 1
+    start_at: "2026-11-01 08:00:00"
+    end_at: "2026-11-01 09:00:00"
+    status: "FREE"
+  - id: 1002
     user_id: 1
     start_at: "2026-11-01 11:00:00"
     end_at: "2026-11-01 12:00:00"
+    status: "FREE"
+  - id: 1003
+    user_id: 1
+    start_at: "2026-11-01 09:00:00"
+    end_at: "2026-11-01 10:00:00"
     status: "FREE"

@@ -15,7 +15,7 @@ import java.time.Instant;
 
 @Entity
 @Table(name = "time_slot")
-public class TimeSlot {
+class TimeSlot {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -56,10 +56,6 @@ public class TimeSlot {
 
     public Long id() {
         return id;
-    }
-
-    public Long userId() {
-        return userId;
     }
 
     public Hour hour() {
